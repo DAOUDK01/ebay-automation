@@ -1,0 +1,119 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { checkCompatibility, checkPrice, checkSpecifics, checkTitle, inActiveHours, priceFloor } from "../src/lib/guardrails";
+import { buildReviseXml, normalizeItem } from "../src/lib/ebay/trading";
+import { DEFAULT_SETTINGS, resolveSettings } from "../src/models/Store";
+import { XMLParser } from "fast-xml-parser";
+import type { Aspect } from "../src/lib/ebay/types";
+
+const pricing = DEFAULT_SETTINGS.modules.pricing;
+const ASPECTS: Aspect[] = [
+  { name: "Brand", required: true, usage: "RECOMMENDED", mode: "FREE_TEXT", multi: false, maxLength: 65, values: [] },
+  { name: "Manufacturer Part Number", required: false, usage: "RECOMMENDED", mode: "FREE_TEXT", multi: false, maxLength: 65, values: [] },
+  { name: "Friction Material", required: false, usage: "RECOMMENDED", mode: "SELECTION_ONLY", multi: false, values: ["Ceramic", "Semi-Metallic"] },
+  { name: "Placement on Vehicle", required: false, usage: "RECOMMENDED", mode: "SELECTION_ONLY", multi: true, values: ["Front", "Rear"] },
+];
+
+test("title: rejects >80 chars, spam, and big shortening", () => {
+  assert.equal(checkTitle("abc", "x".repeat(81)).value, null);
+  assert.equal(checkTitle("Old title here", "L@@K Old title here!!").value, null);
+  assert.equal(checkTitle("A fairly long existing listing title with details", "Short").value, null);
+  assert.equal(checkTitle("Same", " Same ").value, null);
+  assert.equal(checkTitle("Brake pads", "Acme Front Ceramic Brake Pads").value, "Acme Front Ceramic Brake Pads");
+});
+
+test("price: capped, needs cost to decrease, respects floor", () => {
+  const item = { price: 40, hasVariations: false };
+  assert.equal(checkPrice(item, 30, null, pricing).value, null); // no cost -> no decrease
+  assert.equal(checkPrice(item, 50, null, pricing).value, 42); // capped at +5%
+  assert.equal(priceFloor(30, pricing), 39.88);
+  assert.equal(checkPrice(item, 30, 30, pricing).value, 39.88); // floored
+  assert.equal(checkPrice(item, 40.2, 10, pricing).value, null); // <1%
+  assert.equal(checkPrice({ price: 40, hasVariations: true }, 50, null, pricing).value, null);
+  assert.equal(checkPrice(item, 38, 10, { ...pricing, enabled: false }).value, null);
+});
+
+test("specifics: only valid aspects, allowed values, no overwrite by default", () => {
+  const item = { itemSpecifics: { Brand: ["Acme"] }, variationNames: [] };
+  const r = checkSpecifics(
+    item,
+    [
+      { name: "Manufacturer Part Number", values: ["AC-555"], source: "" },
+      { name: "friction material", values: ["ceramic"], source: "" },
+      { name: "Placement on Vehicle", values: ["Front", "Middle"], source: "" },
+      { name: "Made Up", values: ["x"], source: "" },
+      { name: "Brand", values: ["Other"], source: "" },
+    ],
+    ASPECTS,
+    DEFAULT_SETTINGS.modules.specifics,
+  );
+  assert.deepEqual(r.value, { Brand: ["Acme"], "Manufacturer Part Number": ["AC-555"], "Friction Material": ["Ceramic"] });
+  const multi = checkSpecifics(item, [{ name: "Placement on Vehicle", values: ["Front", "Rear"], source: "" }], ASPECTS, DEFAULT_SETTINGS.modules.specifics);
+  assert.deepEqual(multi.value?.["Placement on Vehicle"], ["Front", "Rear"]);
+  const ow = checkSpecifics(item, [{ name: "Brand", values: ["Bosch"], source: "" }], ASPECTS, { enabled: true, overwriteExisting: true });
+  assert.deepEqual(ow.value?.Brand, ["Bosch"]);
+});
+
+test("compatibility: report-only by default, validates years, dedupes existing", () => {
+  const rows = [
+    { year: "2016", make: "Honda", model: "Civic", trim: "", engine: "" },
+    { year: "2017", make: "Honda", model: "Civic", trim: "", engine: "" },
+    { year: "16", make: "Honda", model: "Civic", trim: "", engine: "" },
+  ];
+  const item = { compatibilitySample: [{ Year: "2016", Make: "Honda", Model: "Civic" }] };
+  const r = checkCompatibility(item, rows, DEFAULT_SETTINGS.modules.compatibility);
+  assert.equal(r.value, null);
+  assert.equal(r.suggested.length, 1);
+  const applied = checkCompatibility(item, rows, { enabled: true, apply: true });
+  assert.deepEqual(applied.value, [{ Year: "2017", Make: "Honda", Model: "Civic" }]);
+});
+
+test("active hours incl. windows crossing midnight", () => {
+  const noon = new Date("2026-06-01T12:00:00Z");
+  assert.equal(inActiveHours({ enabled: true, start: "08:00", end: "23:00", timezone: "UTC" }, noon), true);
+  assert.equal(inActiveHours({ enabled: true, start: "22:00", end: "06:00", timezone: "UTC" }, noon), false);
+  assert.equal(inActiveHours({ enabled: true, start: "22:00", end: "06:00", timezone: "UTC" }, new Date("2026-06-01T23:30:00Z")), true);
+  assert.equal(inActiveHours({ enabled: false, start: "22:00", end: "06:00", timezone: "UTC" }, noon), true);
+});
+
+test("settings merge keeps new defaults", () => {
+  const s = resolveSettings({ mode: "auto", modules: { pricing: { maxChangePct: 3 } } } as any);
+  assert.equal(s.mode, "auto");
+  assert.equal(s.modules.pricing.maxChangePct, 3);
+  assert.equal(s.modules.pricing.feePct, 13.5);
+  assert.equal(s.claude.model, "claude-opus-5-5");
+});
+
+test("Trading XML: parse GetItem and build ReviseFixedPriceItem", () => {
+  const xml = `<?xml version="1.0"?><GetItemResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack>
+  <Item><ItemID>111</ItemID><Title>T &amp; Co</Title><ListingType>FixedPriceItem</ListingType>
+  <PrimaryCategory><CategoryID>33572</CategoryID><CategoryName>Brake Pads</CategoryName></PrimaryCategory>
+  <StartPrice currencyID="USD">40.0</StartPrice><Quantity>5</Quantity><SellingStatus><QuantitySold>2</QuantitySold></SellingStatus>
+  <ItemSpecifics><NameValueList><Name>Brand</Name><Value>Acme</Value></NameValueList>
+  <NameValueList><Name>Placement</Name><Value>Front</Value><Value>Rear</Value></NameValueList></ItemSpecifics>
+  <ItemCompatibilityList><Compatibility><NameValueList/><NameValueList><Name>Year</Name><Value>2016</Value></NameValueList>
+  <NameValueList><Name>Make</Name><Value>Honda</Value></NameValueList></Compatibility></ItemCompatibilityList>
+  <PictureDetails><PictureURL>https://i.ebayimg.com/a.jpg</PictureURL></PictureDetails>
+  <Description>&lt;p&gt;Fits Civic&lt;/p&gt;</Description></Item></GetItemResponse>`;
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: "@_",
+    removeNSPrefix: true,
+    parseTagValue: false,
+    isArray: (n) => ["Item", "NameValueList", "Value", "Compatibility", "Errors", "PictureURL"].includes(n),
+  });
+  const it = normalizeItem("111", parser.parse(xml).GetItemResponse.Item[0]);
+  assert.equal(it.title, "T & Co");
+  assert.equal(it.price, 40);
+  assert.equal(it.quantitySold, 2);
+  assert.deepEqual(it.itemSpecifics, { Brand: ["Acme"], Placement: ["Front", "Rear"] });
+  assert.deepEqual(it.compatibilitySample, [{ Year: "2016", Make: "Honda" }]);
+  assert.equal(it.descriptionText, "Fits Civic");
+  assert.equal(it.imageUrl, "https://i.ebayimg.com/a.jpg");
+
+  const out = buildReviseXml("111", { title: "A & B", price: 39.9, itemSpecifics: { Brand: ["Acme"] }, compatibilityAdd: [{ Year: "2017", Make: "Honda" }] });
+  assert.match(out, /<Title>A &amp; B<\/Title>/);
+  assert.match(out, /<StartPrice>39.90<\/StartPrice>/);
+  assert.match(out, /<ItemSpecifics><NameValueList><Name>Brand<\/Name><Value>Acme<\/Value><\/NameValueList><\/ItemSpecifics>/);
+  assert.match(out, /<ReplaceAll>false<\/ReplaceAll><Compatibility>/);
+});

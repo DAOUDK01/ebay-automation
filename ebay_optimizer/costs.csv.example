@@ -1,0 +1,4 @@
+id,cost
+# id = eBay ItemID or your SKU; cost = what the item costs you incl. your shipping cost
+SKU-12345,8.50
+256123456789,12.00

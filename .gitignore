@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.next/
+out/
+*.log
+.env
+.env.local
+backend/.env
+frontend/.env.local
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+# earlier Python prototype artifacts
+ebay_optimizer/data/
+ebay_optimizer/reports/
+ebay_optimizer/logs/
+__pycache__/
+backend/.data/

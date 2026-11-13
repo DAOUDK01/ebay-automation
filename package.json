@@ -1,0 +1,18 @@
+{
+  "name": "ebay-optimizer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI eBay listing optimizer - Next.js frontend, Express API, background worker, MongoDB",
+  "scripts": {
+    "install:all": "npm install && npm --prefix backend install && npm --prefix frontend install",
+    "dev": "concurrently -n api,worker,web -c blue,magenta,green \"npm --prefix backend run dev\" \"npm --prefix backend run dev:worker\" \"npm --prefix frontend run dev\"",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "start": "concurrently -n api,worker,web \"npm --prefix backend start\" \"npm --prefix backend run start:worker\" \"npm --prefix frontend start\"",
+    "test": "npm --prefix backend test",
+    "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck",
+    "db:up": "docker compose up -d mongo"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.7"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mongo",
+      "runtimeExecutable": "backend/node_modules/.cache/mongodb-memory-server/mongod-x64-win32-8.2.6.exe",
+      "runtimeArgs": ["--dbpath", "backend/.data/db", "--port", "27017", "--bind_ip", "127.0.0.1"],
+      "port": 27017,
+      "autoPort": false
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "backend", "run", "dev"],
+      "port": 4100,
+      "autoPort": false
+    },
+    {
+      "name": "worker",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "backend", "run", "dev:worker"]
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
+      "port": 3100,
+      "autoPort": false
+    }
+  ]
+}

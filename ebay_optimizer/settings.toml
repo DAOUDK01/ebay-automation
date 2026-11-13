@@ -1,0 +1,45 @@
+[run]
+# "review" = Claude proposes, you approve in the CSV, then `python run.py push`
+# "auto"   = changes are pushed to eBay automatically at the end of each batch
+mode = "review"
+batch_size = 20
+gap_between_listings_seconds = 20
+gap_between_pushes_seconds = 5
+gap_between_batches_minutes = 60
+# don't touch the same listing again for this many days
+cooldown_days = 21
+# local time window the loop works in ("" = always)
+active_hours = "08:00-23:00"
+resync_hours = 12
+
+[claude]
+model = "claude-opus-5-5"          # "claude-sonnet-5-5" is ~half the cost
+effort = "medium"                  # low | medium | high
+monthly_budget_usd = 90            # loop pauses when this month's spend reaches it
+input_price_per_mtok = 4.0         # Opus 5.5: 4 / 20   Sonnet 5.5: 2 / 10
+output_price_per_mtok = 20.0
+
+[ebay]
+marketplace_id = "EBAY_US"
+site_id = 0
+exclude_seller = ""                # your eBay username, so your own listings aren't "competitors"
+competitor_count = 15
+
+[title]
+enabled = true
+
+[pricing]
+enabled = true
+max_change_pct = 5                 # max price move per edit
+require_cost_for_decrease = true   # never lower a price unless cost is known (costs.csv)
+min_margin_pct = 15                # floor = cost * (1+margin) / (1-fee)
+fee_pct = 13.5                     # eBay final value fee + payment, approx.
+min_price = 0
+costs_file = "costs.csv"
+
+[specifics]
+enabled = true
+overwrite_existing = false         # only ADD missing specifics by default
+
+[compatibility]
+apply = false                      # fitment is only suggested in the report until you trust it

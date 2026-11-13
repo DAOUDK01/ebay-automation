@@ -1,0 +1,123 @@
+import { Router } from "express";
+import { z } from "zod";
+import { loadStore } from "../middleware/auth";
+import { HttpError, parseBody } from "../middleware/error";
+import { Batch } from "../models/Batch";
+import { Proposal, PROPOSAL_STATUSES, type ProposalStatus } from "../models/Proposal";
+import { enqueue } from "../services/jobs";
+import { defaultDeps, recountBatch, revertProposal } from "../services/pipeline";
+
+export const batchesRouter = Router({ mergeParams: true });
+export const proposalsRouter = Router({ mergeParams: true });
+
+const isId = (s: string) => /^[0-9a-f]{24}$/i.test(s);
+
+batchesRouter.get("/", async (req, res) => {
+  const store = await loadStore(req);
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = 20;
+  const [items, total] = await Promise.all([
+    Batch.find({ storeId: store._id }).sort({ number: -1 }).skip((page - 1) * pageSize).limit(pageSize).lean(),
+    Batch.countDocuments({ storeId: store._id }),
+  ]);
+  res.json({ items, total, page, pageSize });
+});
+
+batchesRouter.get("/:batchId", async (req, res) => {
+  const store = await loadStore(req);
+  const batchId = String(req.params.batchId);
+  if (!isId(batchId)) throw new HttpError(404, "Batch not found");
+  const batch = await Batch.findOne({ _id: batchId, storeId: store._id }).lean();
+  if (!batch) throw new HttpError(404, "Batch not found");
+  const proposals = await Proposal.find({ batchId: batch._id }).sort({ _id: 1 }).lean();
+  res.json({ batch, proposals });
+});
+
+batchesRouter.post("/:batchId/approve-all", async (req, res) => {
+  const store = await loadStore(req);
+  const batchId = String(req.params.batchId);
+  if (!isId(batchId)) throw new HttpError(404, "Batch not found");
+  const r = await Proposal.updateMany({ batchId, storeId: store._id, status: "proposed" }, { $set: { status: "approved" } });
+  res.json({ approved: r.modifiedCount });
+});
+
+batchesRouter.post("/:batchId/push", async (req, res) => {
+  const store = await loadStore(req);
+  const batchId = String(req.params.batchId);
+  if (!isId(batchId)) throw new HttpError(404, "Batch not found");
+  const batch = await Batch.findOne({ _id: batchId, storeId: store._id });
+  if (!batch) throw new HttpError(404, "Batch not found");
+  const approved = await Proposal.countDocuments({ batchId: batch._id, status: "approved" });
+  if (!approved) throw new HttpError(400, "No approved changes to push - approve some first");
+  batch.status = "pushing";
+  await batch.save();
+  const { job } = await enqueue(store._id, "push", { batchId: String(batch._id) });
+  res.status(202).json({ job, approved });
+});
+
+// ------------------------------------------------------------- proposals
+const editSchema = z.object({
+  status: z.enum(["approved", "rejected", "proposed"]).optional(),
+  title: z.string().max(80).nullable().optional(),
+  price: z.number().positive().nullable().optional(),
+});
+
+proposalsRouter.patch("/:proposalId", async (req, res) => {
+  const store = await loadStore(req);
+  const pid = String(req.params.proposalId);
+  if (!isId(pid)) throw new HttpError(404, "Change not found");
+  const body = parseBody(editSchema, req.body);
+  const p = await Proposal.findOne({ _id: pid, storeId: store._id });
+  if (!p) throw new HttpError(404, "Change not found");
+  if (!["proposed", "approved", "rejected"].includes(p.status)) throw new HttpError(400, `Cannot edit a change that is ${p.status}`);
+  const changes = { ...(p.changes as Record<string, unknown>) };
+  if (body.title !== undefined) {
+    const t = body.title?.replace(/\s+/g, " ").trim();
+    if (t) changes.title = t;
+    else delete changes.title;
+  }
+  if (body.price !== undefined) {
+    if (body.price) changes.price = Math.round(body.price * 100) / 100;
+    else delete changes.price;
+  }
+  p.changes = changes;
+  p.markModified("changes");
+  if (body.status) p.status = body.status;
+  await p.save();
+  await recountBatch(p.batchId as any);
+  res.json({ proposal: p });
+});
+
+proposalsRouter.post("/:proposalId/revert", async (req, res) => {
+  const store = await loadStore(req);
+  const pid = String(req.params.proposalId);
+  if (!isId(pid)) throw new HttpError(404, "Change not found");
+  try {
+    const p = await revertProposal(store, defaultDeps(store), pid);
+    await recountBatch(p.batchId as any);
+    res.json({ proposal: p });
+  } catch (e: any) {
+    throw new HttpError(400, e?.message ?? "Revert failed");
+  }
+});
+
+/** Change history (everything pushed / failed / reverted) */
+proposalsRouter.get("/", async (req, res) => {
+  const store = await loadStore(req);
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = 25;
+  const statuses = String(req.query.status || "pushed,reverted,failed")
+    .split(",")
+    .filter((s): s is ProposalStatus => (PROPOSAL_STATUSES as readonly string[]).includes(s));
+  const filter = { storeId: store._id, status: { $in: statuses } };
+  const [items, total] = await Promise.all([
+    Proposal.find(filter)
+      .sort({ updatedAt: -1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .select("-competitors -before.descriptionText -before.compatibilitySample")
+      .lean(),
+    Proposal.countDocuments(filter),
+  ]);
+  res.json({ items, total, page, pageSize });
+});
