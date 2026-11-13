@@ -75,6 +75,16 @@ Open http://localhost:3100, create an account, and click **Connect eBay account*
 
 Once you trust the results, switch on the **Automatic runner**. Switch to **auto mode** in Settings only after several good batches.
 
+**Demo data (local only):** to explore the UI without connecting eBay, run `npm --prefix backend run seed:demo`. It creates a demo store with listings and a batch to review, and prints the demo login.
+
+## Adding a feature to the sidebar
+
+Every section of the app is registered in [frontend/src/lib/nav.ts](frontend/src/lib/nav.ts).
+1. Build the page at `frontend/src/app/stores/[id]/<path>/page.tsx`.
+2. Find its entry in `STORE_NAV` and remove `soon: true`, or add a new entry.
+
+The sidebar, breadcrumb and page header pick it up automatically.
+
 ## Tests
 
 ```bash

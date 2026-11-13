@@ -1,7 +1,8 @@
 "use client";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Store as StoreIcon } from "lucide-react";
+import { Suspense, useEffect, useState } from "react";
 import useSWR from "swr";
 import { AppShell } from "@/components/AppShell";
 import { toast } from "@/components/toast";
@@ -17,6 +18,13 @@ function StoresInner() {
   const [pasted, setPasted] = useState("");
   const [pasting, setPasting] = useState(false);
   const ebayError = params.get("ebayError");
+  const wantsConnect = params.get("connect") === "1";
+
+  // "Connect eBay store" in the sidebar links here with ?connect=1
+  useEffect(() => {
+    if (wantsConnect) connect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsConnect]);
 
   async function connect() {
     setConnecting(true);
@@ -47,9 +55,14 @@ function StoresInner() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Your eBay stores</h1>
-          <p className="text-sm text-slate-500">Connect a seller account, then let the optimizer work through your listings in batches.</p>
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+            <StoreIcon className="h-5 w-5" />
+          </span>
+          <div>
+            <h1 className="text-xl font-semibold text-slate-900">Your eBay stores</h1>
+            <p className="text-sm text-slate-500">Connect a seller account, then manage everything for that store from the sidebar.</p>
+          </div>
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" onClick={() => setShowPaste((v) => !v)}>
@@ -132,7 +145,7 @@ function StoresInner() {
 
 export default function StoresPage() {
   return (
-    <AppShell>
+    <AppShell header={<span className="text-sm font-medium text-slate-900">All stores</span>}>
       <Suspense>
         <StoresInner />
       </Suspense>

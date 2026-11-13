@@ -1,28 +1,52 @@
 "use client";
+import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import useSWR from "swr";
 import { AppShell } from "@/components/AppShell";
 import { StoreCtx, type StoreDetail } from "@/components/StoreContext";
-import { Alert, Badge, Spinner, TabLink } from "@/components/ui";
+import { Alert, Badge, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
+import { findNavItem } from "@/lib/nav";
 
 export default function StoreLayout({ children }: { children: ReactNode }) {
   const { id } = useParams<{ id: string }>();
-  const path = usePathname();
+  const pathname = usePathname();
   const { data, error, mutate } = useSWR<StoreDetail>(`/stores/${id}`, fetcher, { refreshInterval: 5000 });
-  const base = `/stores/${id}`;
-  const tabs = [
-    { href: base, label: "Overview" },
-    { href: `${base}/batches`, label: "Batches & review" },
-    { href: `${base}/listings`, label: "Listings" },
-    { href: `${base}/history`, label: "Change history" },
-    { href: `${base}/settings`, label: "Settings" },
-  ];
+  const page = findNavItem(pathname, id);
+  const PageIcon = page?.icon;
+
+  const header = (
+    <nav className="flex min-w-0 items-center gap-1.5 text-sm">
+      <Link href={`/stores/${id}`} className="truncate font-medium text-slate-500 hover:text-slate-800">
+        {data?.store.name ?? "Store"}
+      </Link>
+      {page && (
+        <>
+          <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
+          <span className="truncate font-medium text-slate-900">{page.label}</span>
+        </>
+      )}
+    </nav>
+  );
+
+  const actions = data && (
+    <div className="hidden items-center gap-2 sm:flex">
+      {data.store.runner.enabled ? (
+        <Badge color="green">
+          <span className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+          Runner on
+        </Badge>
+      ) : (
+        <Badge>Runner paused</Badge>
+      )}
+      <Badge color={data.store.settings.mode === "auto" ? "indigo" : "yellow"}>{data.store.settings.mode} mode</Badge>
+    </div>
+  );
 
   return (
-    <AppShell>
+    <AppShell header={header} actions={actions}>
       {error ? (
         <Alert>{error.message}</Alert>
       ) : !data ? (
@@ -31,25 +55,23 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
         </div>
       ) : (
         <StoreCtx.Provider value={{ data, mutate }}>
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <Link href="/stores" className="text-xs text-slate-500 hover:text-slate-700">
-                ← All stores
-              </Link>
-              <h1 className="flex items-center gap-2 text-2xl font-semibold">
-                {data.store.name}
-                {data.store.runner.enabled ? <Badge color="green">running</Badge> : <Badge>paused</Badge>}
-                <Badge color={data.store.settings.mode === "auto" ? "indigo" : "yellow"}>{data.store.settings.mode} mode</Badge>
-              </h1>
+          {page && (
+            <div className="mb-6 flex items-start gap-3">
+              {PageIcon && (
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+                  <PageIcon className="h-5 w-5" />
+                </span>
+              )}
+              <div className="min-w-0">
+                <h1 className="text-xl font-semibold text-slate-900">{page.path === "" ? data.store.name : page.label}</h1>
+                <p className="text-sm text-slate-500">
+                  {page.path === ""
+                    ? `${data.store.ebayUserId} · ${data.store.marketplaceId}`
+                    : page.description ?? `${data.store.name} settings`}
+                </p>
+              </div>
             </div>
-          </div>
-          <nav className="mb-6 flex gap-1 overflow-x-auto border-b border-slate-200">
-            {tabs.map((t) => (
-              <TabLink key={t.href} href={t.href} active={t.href === base ? path === base : path.startsWith(t.href)}>
-                {t.label}
-              </TabLink>
-            ))}
-          </nav>
+          )}
           {children}
         </StoreCtx.Provider>
       )}
