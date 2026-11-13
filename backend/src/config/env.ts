@@ -14,7 +14,8 @@ const ebayEnv = (process.env.EBAY_ENV || "production") === "sandbox" ? "sandbox"
 export const env = {
   port: Number(process.env.PORT || 4100),
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3100",
-  mongoUri: process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/ebay-optimizer",
+  mongoUri: process.env.MONGODB_URI || process.env.MONGO_URL || "mongodb://127.0.0.1:27017/ebay-optimizer",
+  mongoDbName: process.env.MONGODB_DB || "ebay-optimizer",
   get jwtSecret() {
     return required("JWT_SECRET");
   },
