@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, money } from "@/lib/api";
 import type { FitmentRow, Proposal } from "@/lib/types";
 import { FitmentPanel } from "./FitmentPanel";
+import { DescriptionFrame } from "./listing/DescriptionFrame";
 import { ShippingPanel } from "./ShippingPanel";
 import { toast } from "./toast";
 import { Badge, Button, StatusBadge, cx } from "./ui";
@@ -12,6 +13,41 @@ const SPEC_SOURCE: Record<string, { label: string; short: string; color: "blue" 
   other_listings: { label: "Other listings", short: "other listings", color: "green", hint: "Used by other eBay listings of the same part number" },
   part_number_knowledge: { label: "Part # knowledge", short: "part # knowledge", color: "indigo", hint: "Claude's knowledge of this OEM part number" },
 };
+
+/** Collapsed preview of the branded A+ description, with a switch to the current one. */
+function DescriptionChange({ next, current }: { next: string; current?: string }) {
+  const [open, setOpen] = useState(false);
+  const [show, setShow] = useState<"new" | "current">("new");
+  return (
+    <div className="border-t border-slate-100 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="label mb-0">New branded description</span>
+        <Badge color="indigo">A+ content</Badge>
+        <button className="text-xs font-medium text-brand-600" onClick={() => setOpen((v) => !v)}>
+          {open ? "Hide preview" : "Preview"}
+        </button>
+        {open && current !== undefined && (
+          <div className="ml-auto flex overflow-hidden rounded-md border border-slate-200 text-xs">
+            {(["new", "current"] as const).map((k) => (
+              <button
+                key={k}
+                onClick={() => setShow(k)}
+                className={cx("px-2.5 py-1 font-medium", show === k ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}
+              >
+                {k === "new" ? "New" : "Current"}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {open && (
+        <div className="mt-3">
+          <DescriptionFrame html={show === "new" ? next : current ?? ""} />
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** One listing inside a batch: before/after, editable title & price, approve / reject / revert. */
 export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Proposal; onChange: () => void }) {
@@ -183,6 +219,8 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
           <ShippingPanel s={p.shipping} switching={Boolean(p.changes.shippingPolicyId)} />
         </div>
       )}
+
+      {p.changes.description && <DescriptionChange next={p.changes.description} current={b.descriptionHtml} />}
 
       {(newSpecs.length > 0 || compat.length > 0 || p.fitment) && (
         <div className="grid gap-4 border-t border-slate-100 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">

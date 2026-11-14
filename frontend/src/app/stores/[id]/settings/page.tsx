@@ -2,6 +2,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import useSWR from "swr";
+import { DescriptionBrandingCard } from "@/components/DescriptionBrandingCard";
 import { useStore } from "@/components/StoreContext";
 import { toast } from "@/components/toast";
 import { Alert, Button, Card, Toggle } from "@/components/ui";
@@ -427,6 +428,15 @@ export default function SettingsPage() {
           <PolicyList storeId={store.id} />
         </div>
       </Card>
+
+      {s.modules.description && (
+        <DescriptionBrandingCard
+          storeId={store.id}
+          value={s.modules.description}
+          fallbackName={store.ebayUserId || store.name}
+          onChange={(k, v) => up(`modules.description.${k}`, v)}
+        />
+      )}
 
       <Card title="Danger zone">
         <div className="flex items-center justify-between gap-4">

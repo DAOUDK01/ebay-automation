@@ -11,7 +11,8 @@ import { resolveSettings, Store, type StoreDocument } from "../models/Store";
 import { currentMonth, Usage } from "../models/Usage";
 import { cancelPending, enqueue } from "../services/jobs";
 import { defaultDeps, getShippingPolicies } from "../services/pipeline";
-import { settingsSchema } from "./settingsSchema";
+import { renderAplus } from "../lib/description";
+import { descriptionSchema, settingsSchema } from "./settingsSchema";
 
 const router = Router();
 
@@ -142,6 +143,45 @@ router.get("/:id/shipping-policies", async (req, res) => {
   } catch (e: any) {
     throw new HttpError(502, `Couldn't load shipping policies from eBay: ${e?.message ?? e}`);
   }
+});
+
+/** Branded A+ description rendered with sample content and the given (possibly unsaved) branding. */
+router.post("/:id/description-preview", async (req, res) => {
+  const store = await loadStore(req);
+  const brand = parseBody(descriptionSchema, req.body);
+  const withPhoto: any = await Listing.findOne({ storeId: store._id, imageUrl: { $regex: "^https://" } }).lean();
+  const html = renderAplus({
+    content: {
+      headline: "Genuine Honda Civic Front Left Headlight",
+      intro: "This is a used genuine Honda headlight assembly for the driver side, pulled from a 2018 Civic sedan. It is a direct OEM fit - no modifications needed.",
+      highlights: [
+        "Genuine OEM Honda part, not aftermarket",
+        "Part number 33150-TBA-A01",
+        "Front left (driver side) position",
+        "Halogen type with all mounting tabs intact",
+      ],
+      fitment_summary: "Fits 2016-2021 Honda Civic sedan and coupe with halogen headlights. Please check the part number and the compatibility chart before buying.",
+      condition_notes: "Used part in good working condition. Light surface scratches on the lens from normal use - see photos.",
+      included: ["Headlight assembly only", "Bulbs not included"],
+      install_tips: "Remove the front bumper cover to reach the headlight bolts.",
+    },
+    title: "2016-2021 Honda Civic Front Left Headlight 33150-TBA-A01 OEM Used",
+    condition: "Used",
+    pictures: withPhoto?.imageUrl ? [withPhoto.imageUrl] : [],
+    specifics: {
+      Brand: ["Honda"],
+      "Manufacturer Part Number": ["33150-TBA-A01"],
+      "Interchange Part Number": ["33150TBAA01"],
+      "Placement on Vehicle": ["Front", "Left"],
+      "Headlight Style": ["Factory"],
+      "Bulb Type": ["Halogen"],
+    },
+    compatibility: [2016, 2017, 2018, 2019, 2020, 2021].map((y) => ({ Year: String(y), Make: "Honda", Model: "Civic" })),
+    currentHtml: "<p>Pulled from a 2018 Civic, 62k miles. Ships in 2 business days.</p>",
+    brand,
+    storeName: store.ebayUserId || store.name,
+  });
+  res.json({ html });
 });
 
 router.get("/:id/jobs", async (req, res) => {

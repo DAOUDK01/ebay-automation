@@ -2,6 +2,21 @@ import { z } from "zod";
 
 const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "use HH:MM");
 
+export const descriptionSchema = z.object({
+  enabled: z.boolean(),
+  brandName: z.string().max(80),
+  tagline: z.string().max(160),
+  logoUrl: z.union([z.literal(""), z.string().url().max(500).startsWith("https://", "logo URL must start with https://")]),
+  accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "color must look like #1e3a8a"),
+  showPhotos: z.boolean(),
+  showCompatibility: z.boolean(),
+  keepOriginalNotes: z.boolean(),
+  shippingText: z.string().max(500),
+  returnsText: z.string().max(500),
+  warrantyText: z.string().max(500),
+  contactText: z.string().max(500),
+});
+
 export const settingsSchema = z.object({
   mode: z.enum(["review", "auto"]),
   batchSize: z.number().int().min(1).max(200),
@@ -59,6 +74,7 @@ export const settingsSchema = z.object({
         useEstimates: z.boolean(),
       })
       .default({ enabled: true, apply: false, divisor: 5000, minKg: 3, maxKg: 60, useEstimates: true }),
+    description: descriptionSchema.optional(),
     compatibility: z.object({
       enabled: z.boolean(),
       apply: z.boolean(),

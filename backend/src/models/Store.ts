@@ -52,6 +52,23 @@ export interface StoreSettings {
       maxKg: number;
       useEstimates: boolean;
     };
+    /** Branded A+ description: Claude writes the content, the store's branded template lays it out.
+     *  brandName "" = use the eBay store name. keepOriginalNotes = keep the old description text in a
+     *  "Seller notes" section. Policy texts are shown as info boxes (empty = hidden). */
+    description: {
+      enabled: boolean;
+      brandName: string;
+      tagline: string;
+      logoUrl: string;
+      accentColor: string;
+      showPhotos: boolean;
+      showCompatibility: boolean;
+      keepOriginalNotes: boolean;
+      shippingText: string;
+      returnsText: string;
+      warrantyText: string;
+      contactText: string;
+    };
     /** apply = push fitment to eBay (else report only); researchEbay = learn fitment from other listings of the
      *  same part number; allowKnowledge = let Claude add vehicles from its knowledge of the part number (verified
      *  against eBay's catalog); minListings = how many reference listings must agree on a vehicle */
@@ -96,9 +113,27 @@ export const DEFAULT_SETTINGS: StoreSettings = {
     },
     specifics: { enabled: true, overwriteExisting: false, useOtherListings: true, allowKnowledge: true, allowCustomNames: true },
     shipping: { enabled: true, apply: false, divisor: 5000, minKg: 3, maxKg: 60, useEstimates: true },
+    description: DEFAULT_DESCRIPTION(),
     compatibility: { enabled: true, apply: false, researchEbay: true, allowKnowledge: true, minListings: 2, maxReferenceListings: 5 },
   },
 };
+
+function DEFAULT_DESCRIPTION(): StoreSettings["modules"]["description"] {
+  return {
+    enabled: true,
+    brandName: "",
+    tagline: "Genuine used OEM auto parts - tested, inspected and carefully packed",
+    logoUrl: "",
+    accentColor: "#1e3a8a",
+    showPhotos: true,
+    showCompatibility: true,
+    keepOriginalNotes: true,
+    shippingText: "Ships within the handling time shown on this listing. Every part is carefully packed to arrive safely.",
+    returnsText: "Returns are accepted as shown in this listing's return policy.",
+    warrantyText: "",
+    contactText: "Not sure it fits? Message us through eBay with your VIN and we will check it for you.",
+  };
+}
 
 const storeSchema = new Schema(
   {

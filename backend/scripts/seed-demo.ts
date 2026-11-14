@@ -5,6 +5,7 @@
  * Refuses to run against anything but a local MongoDB.
  */
 import bcrypt from "bcryptjs";
+import { renderAplus } from "../src/lib/description";
 import mongoose from "mongoose";
 import { env } from "../src/config/env";
 import { encrypt } from "../src/lib/crypto";
@@ -110,7 +111,7 @@ async function main() {
     batchId: batch._id,
     itemId: listings[i].itemId,
     status,
-    before: snap(listings[i]),
+    before: { ...snap(listings[i]), ...(i === 0 ? { descriptionHtml: "<p>Front brake pads, fits Civic.</p>" } : {}) },
     changes,
     notes: ['competitor query: "demo" (12 found)', "title: ok"],
     costUsd: 0.054,
@@ -125,7 +126,29 @@ async function main() {
     p(
       0,
       "proposed",
-      { title: "2016-2021 Honda Civic Front Brake Pad Set Ceramic 45022-TBA-A01 OEM Used", price: 37.49 },
+      {
+        title: "2016-2021 Honda Civic Front Brake Pad Set Ceramic 45022-TBA-A01 OEM Used",
+        price: 37.49,
+        description: renderAplus({
+          content: {
+            headline: "Genuine Honda Civic Front Brake Pad Set",
+            intro: "A used genuine Honda front brake pad set for the 2016-2021 Civic. Direct OEM fit with no changes needed.",
+            highlights: ["Genuine OEM Honda part", "Part number 45022-TBA-A01", "Front axle set for both wheels", "Ceramic compound for quiet braking"],
+            fitment_summary: "Fits 2016-2021 Honda Civic. Please check the part number and compatibility chart before buying.",
+            condition_notes: "Used with plenty of pad material left. See photos for the exact condition.",
+            included: ["4 front brake pads"],
+            install_tips: "Push the caliper piston back slowly before fitting the new pads.",
+          },
+          title: "2016-2021 Honda Civic Front Brake Pad Set",
+          condition: "Used",
+          pictures: [],
+          specifics: { Brand: ["Honda"], "Manufacturer Part Number": ["45022-TBA-A01"], "Placement on Vehicle": ["Front"] },
+          compatibility: ["2016", "2017", "2018", "2019", "2020", "2021"].map((y) => ({ Year: y, Make: "Honda", Model: "Civic" })),
+          currentHtml: "<p>Front brake pads, fits Civic.</p>",
+          brand: DEFAULT_SETTINGS.modules.description,
+          storeName: "acme-parts",
+        }),
+      },
       {
         suggestion: {
           title_reason: "Follows the store format: years, brand, model, part & position, part number, OEM Used.",

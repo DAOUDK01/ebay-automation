@@ -6,6 +6,7 @@ import { userAccessToken } from "../lib/ebay/auth";
 import { RestClient } from "../lib/ebay/rest";
 import { TradingClient } from "../lib/ebay/trading";
 import type { EbayItem, FitmentRow, ListingChanges, ShippingAnalysis, ShippingPolicy } from "../lib/ebay/types";
+import { hasContent, isAplus, renderAplus } from "../lib/description";
 import { buildFitmentRows, gatherFitmentEvidence, type FitmentDeps } from "../lib/fitment";
 import { analyzeShipping, withKg } from "../lib/shipping";
 import { checkCompatibility, checkPrice, checkSpecifics, checkTitle } from "../lib/guardrails";
@@ -99,6 +100,7 @@ export function buildChanges(
   fitmentRows: FitmentRow[] = [],
   specificsEvidenceNames: string[] = [],
   shipping: ShippingAnalysis | null = null,
+  storeName = "",
 ): { changes: ListingChanges; notes: string[]; suggestedCompat: FitmentRow[] } {
   const changes: ListingChanges = {};
   const notes: string[] = [];
@@ -122,6 +124,28 @@ export function buildChanges(
     const confident = shipping.source === "listing" || shipping.confidence !== "low";
     if (s.modules.shipping.apply && shipping.suggested && !shipping.matches && !shipping.overMax && confident && shipping.suggested.id) {
       changes.shippingPolicyId = shipping.suggested.id;
+    }
+  }
+  const d = s.modules.description;
+  if (d.enabled) {
+    if (!hasContent(suggestion.description_content)) {
+      notes.push("description: Claude returned no content - kept current");
+    } else {
+      const html = renderAplus({
+        content: suggestion.description_content,
+        title: changes.title ?? item.title,
+        condition: item.condition,
+        pictures: item.pictures?.length ? item.pictures : item.imageUrl ? [item.imageUrl] : [],
+        specifics: { ...item.itemSpecifics, ...(changes.itemSpecifics ?? {}) },
+        compatibility: [...(item.compatibilityAll ?? item.compatibilitySample ?? []), ...(changes.compatibilityAdd ?? [])],
+        currentHtml: item.descriptionHtml,
+        brand: d,
+        storeName,
+      });
+      if (html !== item.descriptionHtml) {
+        changes.description = html;
+        notes.push(isAplus(item.descriptionHtml) ? "description: branded A+ content refreshed" : "description: new branded A+ content");
+      }
     }
   }
   return { changes, notes, suggestedCompat: c.suggested };
@@ -164,7 +188,7 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
       item,
       aspects,
       competitors,
-      { ...s.claude, titleTemplate: s.modules.title.enabled ? s.modules.title.template : "" },
+      { ...s.claude, titleTemplate: s.modules.title.enabled ? s.modules.title.template : "", wantDescription: s.modules.description.enabled },
       {
         partNumbers: evidence.partNumbers,
         summary: evidence.summary,
@@ -201,6 +225,7 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
     fit.rows,
     evidence.specifics.map((e) => e.name),
     shipping,
+    store.ebayUserId || store.name,
   );
   const status = Object.keys(changes).length ? "proposed" : "no_change";
   const withFitment = evidence.references.filter((r) => r.rowCount > 0).length;
@@ -209,6 +234,8 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
     : "part-number research: no part number found in title/specifics";
   await Proposal.create({
     ...base,
+    // keep the old description only when we're replacing it, so Revert can put it back
+    ...(changes.description !== undefined ? { before: { ...snapshot, descriptionHtml: item.descriptionHtml ?? "" } } : {}),
     status,
     suggestion: { ...result.suggestion, suggested_compatibility_rows: suggestedCompat },
     shipping,

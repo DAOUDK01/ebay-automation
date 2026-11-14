@@ -3,6 +3,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Aspect, Competitor, EbayItem } from "./ebay/types";
 import type { FitmentEvidence } from "./fitment";
+import { descriptionToText } from "./description";
 import type { ShippingEstimate } from "./shipping";
 
 /** Models that accept server-side refusal fallbacks ("default" routing). */
@@ -30,8 +31,20 @@ export interface ClaudeSuggestion {
   }[];
   shipping_estimate: ShippingEstimate;
   shipping_notes: string;
+  description_content: DescriptionContent;
   other_notes: string;
   confidence: "low" | "medium" | "high";
+}
+
+/** Text blocks for the branded A+ description (the HTML layout comes from the store's template). */
+export interface DescriptionContent {
+  headline: string;
+  intro: string;
+  highlights: string[];
+  fitment_summary: string;
+  condition_notes: string;
+  included: string[];
+  install_tips: string;
 }
 
 export const SYSTEM_PROMPT = `You are an expert eBay listing optimizer for an eBay store. For each listing you
@@ -116,6 +129,27 @@ Shipping:
 - shipping_notes: short advice if handling time or shipping cost looks uncompetitive versus
   competitors, else an empty string.
 
+Description (description_content) - the text for a branded "A+" product description. The store's
+template does the layout, branding, photos, specs table, compatibility table and policies; you write
+the words only (plain text, no HTML, no links, no emails/phone numbers, no emojis):
+- Plain, friendly, easy English a normal buyer understands. Short sentences. Facts only - never invent
+  features, condition details, part numbers or fitment that the listing data/evidence does not support.
+- headline: one short line naming the part, e.g. "Genuine Honda Civic Front Left Headlight".
+- intro: 2-3 sentences: what the part is, which vehicles it fits (broadly), and that it is a used
+  genuine OEM part pulled from a vehicle (only if the listing says used/OEM).
+- highlights: 4-6 short bullet points of real buyer benefits/facts (OEM quality, exact part number,
+  position, what it connects to, tested/inspected only if stated in the listing).
+- fitment_summary: one or two sentences summarising compatible vehicles and reminding the buyer to
+  check the part number / compatibility table before buying.
+- condition_notes: honest condition from the listing's condition and condition description / current
+  description (wear, scratches, missing tabs). If nothing is stated, say it is a used part with
+  normal signs of use and to check the photos. Never claim "new" or "perfect".
+- included: what's in the box, only what the listing supports (e.g. "Headlight assembly only - bulbs
+  not included" if stated); [] if unknown.
+- install_tips: one short practical tip, or "" if nothing useful.
+- "current_description_text" (if present) is the listing's current description as plain text: keep its
+  important facts (condition, what's included, notes) in your content.
+
 Return JSON only, matching the schema.`;
 
 export const SUGGESTION_SCHEMA = {
@@ -170,12 +204,26 @@ export const SUGGESTION_SCHEMA = {
       additionalProperties: false,
     },
     shipping_notes: { type: "string" },
+    description_content: {
+      type: "object",
+      properties: {
+        headline: { type: "string" },
+        intro: { type: "string" },
+        highlights: { type: "array", items: { type: "string" } },
+        fitment_summary: { type: "string" },
+        condition_notes: { type: "string" },
+        included: { type: "array", items: { type: "string" } },
+        install_tips: { type: "string" },
+      },
+      required: ["headline", "intro", "highlights", "fitment_summary", "condition_notes", "included", "install_tips"],
+      additionalProperties: false,
+    },
     other_notes: { type: "string" },
     confidence: { type: "string", enum: ["low", "medium", "high"] },
   },
   required: [
     "title", "title_reason", "item_specifics", "recommended_price", "price_reason",
-    "compatibility", "shipping_estimate", "shipping_notes", "other_notes", "confidence",
+    "compatibility", "shipping_estimate", "shipping_notes", "description_content", "other_notes", "confidence",
   ],
   additionalProperties: false,
 } as const;
@@ -204,6 +252,8 @@ export interface ClaudeOptions {
   outputPricePerMtok: number;
   /** store title format, e.g. "{Year range} {Brand} {Model} {Part name and location} {Part number} OEM Used" */
   titleTemplate?: string;
+  /** include the current description text so the A+ content keeps its facts */
+  wantDescription?: boolean;
 }
 
 export interface SuggestResult {
@@ -233,6 +283,7 @@ export async function suggestImprovements(
   const payload = {
     ...(opts.titleTemplate?.trim() ? { store_title_format: opts.titleTemplate.trim() } : {}),
     listing,
+    ...(opts.wantDescription && descriptionHtml ? { current_description_text: descriptionToText(descriptionHtml).slice(0, 4000) } : {}),
     missing_aspects: missingAspectsForPrompt(aspects, item.itemSpecifics),
     competitors: competitors.map(({ url: _u, ...c }) => c),
     ...(fitment?.partNumbers.length ? { part_numbers: fitment.partNumbers } : {}),

@@ -47,6 +47,7 @@ export interface StoreSettings {
       maxKg: number;
       useEstimates: boolean;
     };
+    description: DescriptionBrand;
     compatibility: {
       enabled: boolean;
       apply: boolean;
@@ -56,6 +57,21 @@ export interface StoreSettings {
       maxReferenceListings: number;
     };
   };
+}
+
+export interface DescriptionBrand {
+  enabled: boolean;
+  brandName: string;
+  tagline: string;
+  logoUrl: string;
+  accentColor: string;
+  showPhotos: boolean;
+  showCompatibility: boolean;
+  keepOriginalNotes: boolean;
+  shippingText: string;
+  returnsText: string;
+  warrantyText: string;
+  contactText: string;
 }
 
 export interface StoreStats {
@@ -123,6 +139,8 @@ export interface Listing {
 export interface EbayItemSnapshot {
   itemId: string;
   title: string;
+  /** only kept when the description is being replaced */
+  descriptionHtml?: string;
   price: number;
   currency: string;
   categoryName: string;
@@ -252,6 +270,7 @@ export interface Proposal {
     compatibilityAdd?: Record<string, string>[];
     shippingPolicyId?: string;
     packageDetails?: PackageDetails;
+    description?: string;
   };
   notes: string[];
   fitment?: FitmentInfo | null;
