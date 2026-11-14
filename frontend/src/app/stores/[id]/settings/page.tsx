@@ -83,6 +83,7 @@ export default function SettingsPage() {
   const [name, setName] = useState(store.name);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     if (!dirty) {
@@ -115,6 +116,25 @@ export default function SettingsPage() {
       toast.error(e.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function resetData() {
+    const typed = prompt(
+      `This permanently deletes ALL synced listings, batches, suggestions and change history for ${store.name} from this app ` +
+        `(eBay itself is not touched, but past changes can no longer be reverted from here).\n\nType CLEAR to confirm.`,
+    );
+    if (typed?.trim().toUpperCase() !== "CLEAR") return;
+    setResetting(true);
+    try {
+      const r = await api<{ deleted: Record<string, number> }>(`/stores/${store.id}/reset`, { body: {} });
+      const d = r.deleted;
+      toast.success(`Cleared ${d.listings} listings, ${d.batches} batches, ${d.proposals} suggestions`);
+      mutate();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setResetting(false);
     }
   }
 
@@ -439,6 +459,15 @@ export default function SettingsPage() {
       )}
 
       <Card title="Danger zone">
+        <div className="mb-4 flex items-center justify-between gap-4 border-b border-slate-100 pb-4">
+          <p className="text-sm text-slate-600">
+            <b>Start over:</b> delete all synced listings, batches, suggestions and history for this store. The eBay connection and these
+            settings stay, and the runner is paused. Nothing on eBay changes. Run a sync afterwards to start fresh.
+          </p>
+          <Button variant="danger" loading={resetting} onClick={resetData}>
+            Clear synced data
+          </Button>
+        </div>
         <div className="flex items-center justify-between gap-4">
           <p className="text-sm text-slate-600">Remove this eBay account and all of its data from the app. Your eBay listings are not affected.</p>
           <Button variant="danger" onClick={disconnect}>

@@ -93,6 +93,31 @@ router.delete("/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Start over: delete everything synced or produced for this store (listings, batches, proposals, jobs)
+ * but keep the connected eBay account, its settings and this month's Claude spend (budget guard).
+ * Nothing on eBay changes. Refused while the worker is busy with this store.
+ */
+router.post("/:id/reset", async (req, res) => {
+  const store = await loadStore(req);
+  const busy = await Job.exists({ storeId: store._id, status: "running", lockedUntil: { $gt: new Date() } });
+  if (busy) throw new HttpError(409, "The worker is busy with this store right now - pause the runner, wait a minute and try again.");
+  const [listings, proposals, batches, jobs] = await Promise.all([
+    Listing.deleteMany({ storeId: store._id }),
+    Proposal.deleteMany({ storeId: store._id }),
+    Batch.deleteMany({ storeId: store._id }),
+    Job.deleteMany({ storeId: store._id }),
+  ]);
+  await Store.updateOne(
+    { _id: store._id },
+    { $set: { "runner.enabled": false, "runner.lastError": "" }, $unset: { lastSyncAt: 1, "runner.nextRunAt": 1, "runner.lastBatchAt": 1 } },
+  );
+  res.json({
+    ok: true,
+    deleted: { listings: listings.deletedCount, proposals: proposals.deletedCount, batches: batches.deletedCount, jobs: jobs.deletedCount },
+  });
+});
+
 router.post("/:id/sync", async (req, res) => {
   const store = await loadStore(req);
   const { job, duplicate } = await enqueue(store._id, "sync");
