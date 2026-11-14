@@ -151,6 +151,9 @@ the words only (plain text, no HTML, no links, no emails/phone numbers, no emoji
 - faqs: 3-4 short questions buyers of THIS part really ask (fit, condition, what is included, part
   number / interchange, wiring or connectors) with short honest answers based only on the data;
   say "Message us with your VIN" when fitment depends on options.
+- Store return policy (always, for every listing): 30-day returns accepted, the buyer pays return
+  shipping. If any text mentions returns, use exactly this - never free returns, never another
+  number of days, never "no returns".
 - "current_description_text" (if present) is the listing's current description as plain text: keep its
   important facts (condition, what's included, notes) in your content.
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DescriptionContent } from "../src/lib/claude";
 import {
+  RETURN_POLICY,
   APLUS_MARKER,
   cleanText,
   descriptionToText,
@@ -180,4 +181,11 @@ test("related items: same vehicle and part words rank first, no dupes/self/no-ph
     c("6", "Honda Civic Headlight Right", { imageUrl: "" }),
   ], 3);
   assert.deepEqual(out.map((x) => x.itemId), ["3", "2", "5"]);
+});
+
+test("return policy is fixed: 30 days, buyer pays return shipping, whatever the settings say", () => {
+  const html = renderAplus({ ...base, brand: { ...brand, returnsText: "Free 60 day returns" } });
+  assert.ok(html.includes(RETURN_POLICY));
+  assert.ok(!html.includes("Free 60 day returns"));
+  assert.equal(RETURN_POLICY, "30-day returns accepted. The buyer pays return shipping.");
 });

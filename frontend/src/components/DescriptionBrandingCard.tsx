@@ -159,7 +159,9 @@ export function DescriptionBrandingCard({
 
         <div className="ml-11 grid max-w-3xl gap-4 sm:grid-cols-2">
           {text("shippingText", "Shipping box")}
-          {text("returnsText", "Returns box")}
+          <Field label="Returns box" hint="Fixed for every store and every listing.">
+            <div className="input min-h-[64px] cursor-not-allowed bg-slate-50 text-slate-600">30-day returns accepted. The buyer pays return shipping.</div>
+          </Field>
           {text("warrantyText", "Warranty box", "Leave empty to hide.")}
           {text("contactText", "Questions box")}
         </div>

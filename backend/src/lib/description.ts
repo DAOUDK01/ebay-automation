@@ -10,6 +10,9 @@ import type { CompatRow, Specifics } from "./ebay/types";
 import type { RelatedItem } from "./related";
 
 export const APLUS_MARKER = "<!-- lo-aplus:v1 -->";
+
+/** Fixed for every store: shown in every description and given to Claude so FAQs never contradict it. */
+export const RETURN_POLICY = "30-day returns accepted. The buyer pays return shipping.";
 const NOTES_START = "<!-- lo-notes -->";
 const NOTES_END = "<!-- /lo-notes -->";
 
@@ -445,7 +448,7 @@ export function renderAplus(input: AplusInput): string {
   // ---- 10. policies
   const policies = [
     ["&#10148;", "Shipping", b.shippingText],
-    ["&#8634;", "Returns", b.returnsText],
+    ["&#8634;", "Returns", RETURN_POLICY],
     ["&#9733;", "Warranty", b.warrantyText],
     ["?", "Questions", b.contactText],
   ].filter(([, , t]) => cleanText(t));
