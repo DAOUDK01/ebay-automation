@@ -7,6 +7,7 @@
 import type { StoreSettings } from "../models/Store";
 import type { DescriptionContent } from "./claude";
 import type { CompatRow, Specifics } from "./ebay/types";
+import type { RelatedItem } from "./related";
 
 export const APLUS_MARKER = "<!-- lo-aplus:v1 -->";
 const NOTES_START = "<!-- lo-notes -->";
@@ -26,6 +27,12 @@ export interface AplusInput {
   brand: Brand;
   /** fallback brand name (eBay store / user id) */
   storeName: string;
+  /** eBay user id - used for store / feedback / contact links */
+  sellerId?: string;
+  price?: number;
+  currency?: string;
+  /** other items from the store for "You may also like" */
+  related?: RelatedItem[];
 }
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'" };
@@ -156,189 +163,369 @@ export function wordmark(name: string, highlight: string, accent: string, size =
   return `<span style="${style}">${inner}</span>`;
 }
 
+/** Links back into the seller's own eBay pages (the only links eBay allows in descriptions). */
+export function storeLinks(sellerId: string, storeUrl: string) {
+  const id = encodeURIComponent(sellerId || "");
+  const store = /^https:\/\/(www\.)?ebay\.[a-z.]+\//i.test(storeUrl || "") ? storeUrl : `https://www.ebay.com/sch/i.html?_ssn=${id}`;
+  return {
+    home: store,
+    all: `https://www.ebay.com/sch/i.html?_ssn=${id}`,
+    feedback: `https://www.ebay.com/fdbk/feedback_profile/${id}`,
+    contact: `https://www.ebay.com/cnt/intermediatedFAQ?requested=${id}`,
+    item: (itemId: string) => `https://www.ebay.com/itm/${encodeURIComponent(itemId)}`,
+  };
+}
+
+const money = (n: number | undefined, cur = "USD") =>
+  typeof n === "number" && n > 0 ? `${cur === "USD" ? "$" : `${cur} `}${n.toFixed(2)}` : "";
+
 export function renderAplus(input: AplusInput): string {
   const { content: c, brand: b } = input;
   const hex = (v: string | undefined, d: string) => (/^#[0-9a-f]{6}$/i.test(v || "") ? v! : d);
-  const accent = hex(b.accentColor, "#e11d2a");
-  const dark = hex(b.darkColor, "#0b0f19");
+  const R = hex(b.accentColor, "#e11d2a"); // brand red
+  const D = hex(b.darkColor, "#0b0f19"); // brand dark
   const brandName = cleanText(b.brandName) || input.storeName;
   const logo = httpsOnly(b.logoUrl);
+  const banner = httpsOnly(b.bannerUrl ?? "");
+  const links = storeLinks(input.sellerId || input.storeName, b.storeUrl ?? "");
   const pics = b.showPhotos ? input.pictures.map(httpsOnly).filter(Boolean) : [];
   const specs = specRows(input.specifics);
   const groups = b.showCompatibility ? groupFitment(input.compatibility) : [];
-  const shownGroups = groups.slice(0, 30);
+  const shownGroups = groups.slice(0, 24);
   const notes = b.keepOriginalNotes ? cleanText(originalNotes(input.currentHtml)).slice(0, 3000) : "";
-  const pn = (input.specifics["Manufacturer Part Number"] ?? input.specifics["OE/OEM Part Number"] ?? [])[0];
-  const highlights = (c.highlights ?? []).map(cleanText).filter(Boolean).slice(0, 8);
+  const spec1 = (...names: string[]) => names.map((n) => input.specifics[n]?.join(", ")).find(Boolean) ?? "";
+  const pn = spec1("Manufacturer Part Number", "OE/OEM Part Number");
+  const highlights = (c.highlights ?? []).map(cleanText).filter(Boolean).slice(0, 6);
   const included = (c.included ?? []).map(cleanText).filter(Boolean).slice(0, 8);
+  const faqs = b.showFaq === false ? [] : (c.faqs ?? []).map((f) => ({ q: cleanText(f.q), a: cleanText(f.a) })).filter((f) => f.q && f.a).slice(0, 5);
   const badges = (b.badges ?? []).map(cleanText).filter(Boolean).slice(0, 4);
-  const caps = (ls = 3) => `text-transform:uppercase;letter-spacing:${ls}px`;
+  const related = b.showRelated === false ? [] : (input.related ?? []).filter((r) => httpsOnly(r.imageUrl)).slice(0, b.relatedCount || 4);
 
-  const h2 = (t: string) =>
-    `<h2 style="margin:0 0 14px;font-size:17px;font-weight:900;color:${dark};${caps(1.5)};border-left:5px solid ${accent};padding:2px 0 2px 10px">${esc(t)}</h2>`;
-  const section = (inner: string) => `<div style="margin:0 0 26px">${inner}</div>`;
-  const tick =
-    `<span style="display:inline-block;width:20px;height:20px;line-height:20px;border-radius:50%;background:${accent};color:#ffffff;` +
-    `text-align:center;font-size:12px;font-weight:bold;margin-right:8px;vertical-align:middle">&#10003;</span>`;
-  const card = (title: string, body: string) =>
-    `<div style="flex:1 1 210px;min-width:0;border:1px solid #e5e7eb;border-top:4px solid ${accent};border-radius:4px;padding:12px 14px;background:#ffffff">` +
-    `<div style="font-weight:900;color:${dark};margin-bottom:4px;${caps(1)};font-size:13px">${esc(title)}</div>` +
-    `<div style="font-size:14px;color:#374151">${multiline(body)}</div></div>`;
-  const td = "padding:8px 10px;border:1px solid #e5e7eb";
-  const tableHead = (cols: string[]) =>
-    `<tr style="background:${dark};color:#ffffff">` +
-    cols.map((x) => `<th style="padding:8px 10px;text-align:left;font-size:12px;${caps(1)};border-bottom:3px solid ${accent}">${esc(x)}</th>`).join("") +
-    `</tr>`;
+  // ---- style atoms
+  const F = "font-family:Arial,Helvetica,sans-serif";
+  const caps = (ls = 2) => `text-transform:uppercase;letter-spacing:${ls}px`;
+  const texture = `background-color:${D};background-image:repeating-linear-gradient(135deg,rgba(255,255,255,0.035) 0px,rgba(255,255,255,0.035) 2px,transparent 2px,transparent 7px)`;
+  const a = (href: string, inner: string, style: string) => `<a href="${esc(href)}" target="_blank" style="text-decoration:none;${style}">${inner}</a>`;
+  const btn = (href: string, label: string, kind: "red" | "dark" | "ghost" = "red") =>
+    a(
+      href,
+      esc(label),
+      `display:inline-block;padding:11px 20px;font-size:13px;font-weight:900;${caps(1.5)};border-radius:3px;` +
+        (kind === "red"
+          ? `background:${R};color:#ffffff;border:2px solid ${R}`
+          : kind === "dark"
+            ? `background:${D};color:#ffffff;border:2px solid ${D}`
+            : `background:transparent;color:#ffffff;border:2px solid rgba(255,255,255,0.6)`),
+    );
+  const icon = (glyph: string, size = 38, bg = R) =>
+    `<span style="display:inline-block;width:${size}px;height:${size}px;line-height:${size}px;border-radius:50%;background:${bg};color:#ffffff;text-align:center;font-size:${Math.round(size * 0.45)}px;font-weight:900;flex:0 0 auto">${glyph}</span>`;
+  const title = (kicker: string, text: string, onDark = false) =>
+    `<div style="text-align:center;margin:0 0 22px">` +
+    `<div style="font-size:12px;font-weight:bold;color:${R};${caps(4)}">${esc(kicker)}</div>` +
+    `<h2 style="margin:6px 0 0;font-size:26px;line-height:1.2;font-weight:900;${caps(1)};color:${onDark ? "#ffffff" : D}">${esc(text)}</h2>` +
+    `<div style="margin:10px auto 0;width:70px;height:4px;background:${R}"></div></div>`;
+  const wrap = (inner: string, bg = "#ffffff", pad = "34px 24px") => `<div style="background:${bg};padding:${pad}">${inner}</div>`;
+  const td = "padding:9px 12px;border-bottom:1px solid #e5e7eb;font-size:14px";
 
   const out: string[] = [APLUS_MARKER];
+  out.push(`<div style="max-width:1000px;margin:0 auto;${F};font-size:15px;line-height:1.6;color:#1f2937;background:#ffffff;border:1px solid #e5e7eb">`);
+
+  // ---- 1. top menu bar
+  const nav = [
+    ["Store home", links.home],
+    ["All items", links.all],
+    ["Feedback", links.feedback],
+    ["Contact us", links.contact],
+  ];
   out.push(
-    `<div style="max-width:980px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#1f2937;background:#ffffff;border:1px solid #e5e7eb">`,
+    `<div style="${texture};padding:12px 20px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;border-bottom:3px solid ${R}">` +
+      `<div style="display:flex;align-items:center;gap:10px">` +
+      (logo ? `<img src="${esc(logo)}" alt="" style="height:40px;width:auto;background:#ffffff;border-radius:50%;padding:2px">` : "") +
+      a(links.home, wordmark(brandName, b.brandHighlight, R, 22), "") +
+      `</div>` +
+      `<div style="display:flex;flex-wrap:wrap;gap:4px">` +
+      nav.map(([l, h]) => a(h, esc(l), `color:#ffffff;font-size:12px;font-weight:bold;${caps(1.5)};padding:8px 12px;border-radius:3px`)).join("") +
+      `</div></div>`,
   );
 
-  // header: dark band with a red diagonal stripe; logo + wordmark + spaced tagline
-  out.push(
-    `<div style="background-color:${dark};background-image:linear-gradient(115deg,${dark} 0%,${dark} 72%,${accent} 72%,${accent} 75%,#1f2937 75%,#111827 100%);color:#ffffff;padding:20px 24px">` +
-      `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px">` +
-      (logo ? `<img src="${esc(logo)}" alt="${esc(brandName)}" style="height:64px;width:auto;max-width:180px;display:block;background:#ffffff;border-radius:6px;padding:4px">` : "") +
-      `<div style="min-width:0">${wordmark(brandName, b.brandHighlight, accent)}` +
-      (b.tagline.trim()
-        ? `<div style="margin-top:6px;font-size:11px;font-weight:bold;${caps()};color:#e5e7eb">` +
-          `<span style="display:inline-block;width:22px;height:2px;background:${accent};vertical-align:middle;margin-right:8px"></span>${txt(b.tagline)}</div>`
-        : "") +
-      `</div></div></div>`,
-  );
+  // ---- 2. banner (their own image) or a built hero in the banner style
+  if (banner) {
+    out.push(a(links.home, `<img src="${esc(banner)}" alt="${esc(brandName)}" style="display:block;width:100%;height:auto">`, "display:block"));
+  } else {
+    out.push(
+      `<div style="background-color:${D};background-image:linear-gradient(115deg,${D} 0%,${D} 58%,${R} 58%,${R} 61%,#1f2937 61%,#1f2937 66%,${R} 66%,${R} 67%,#111827 67%,#0b0f19 100%);padding:38px 28px;color:#ffffff">` +
+        `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:18px">` +
+        (logo ? `<img src="${esc(logo)}" alt="${esc(brandName)}" style="height:96px;width:auto;background:#ffffff;border-radius:50%;padding:4px">` : "") +
+        `<div>${wordmark(brandName, b.brandHighlight, R, 44)}` +
+        (b.tagline.trim()
+          ? `<div style="margin-top:10px;font-size:13px;font-weight:bold;${caps(5)};color:#e5e7eb"><span style="display:inline-block;width:40px;height:2px;background:${R};vertical-align:middle;margin-right:12px"></span>${txt(b.tagline)}</div>`
+          : "") +
+        `<div style="margin-top:18px">${btn(links.all, "Shop all parts")} ${btn(links.contact, "Ask a question", "ghost")}</div>` +
+        `</div></div></div>`,
+    );
+  }
 
-  // trust badges strip
+  // ---- 3. trust badges
   if (badges.length) {
+    const glyphs = ["&#10003;", "&#10148;", "&#9733;", "&#9673;"];
     out.push(
       `<div style="display:flex;flex-wrap:wrap;background:#f3f4f6;border-bottom:1px solid #e5e7eb">` +
         badges
           .map(
             (t, i) =>
-              `<div style="flex:1 1 150px;padding:12px 14px;font-size:12px;font-weight:900;color:${dark};${caps(1)};${i ? "border-left:1px solid #d1d5db" : ""}">${tick}${esc(t)}</div>`,
+              `<div style="flex:1 1 200px;display:flex;align-items:center;gap:12px;padding:16px 18px;${i ? "border-left:1px solid #e5e7eb" : ""}">` +
+              icon(glyphs[i % glyphs.length], 40) +
+              `<div style="font-size:13px;font-weight:900;color:${D};${caps(1)};line-height:1.25">${esc(t)}</div></div>`,
           )
           .join("") +
         `</div>`,
     );
   }
 
-  out.push(`<div style="padding:22px">`);
-
-  // hero
+  // ---- 4. product showcase
+  const facts = [
+    ["Part number", pn],
+    ["Condition", input.condition],
+    ["Brand", spec1("Brand")],
+    ["Position", spec1("Placement on Vehicle")],
+  ].filter(([, v]) => v);
+  const price = money(input.price, input.currency);
   out.push(
-    `<div style="display:flex;flex-wrap:wrap;gap:22px;margin:0 0 26px;align-items:flex-start">` +
-      (pics[0]
-        ? `<div style="flex:1 1 300px;min-width:0"><img src="${esc(pics[0])}" alt="${esc(input.title)}" style="width:100%;height:auto;border:1px solid #e5e7eb;border-radius:4px"></div>`
-        : "") +
-      `<div style="flex:1 1 320px;min-width:0">` +
-      `<h1 style="margin:0 0 12px;font-size:26px;line-height:1.2;font-weight:900;color:${dark}">${txt(c.headline)}</h1>` +
-      `<p style="margin:0 0 14px">${multiline(c.intro)}</p>` +
-      `<div style="display:flex;flex-wrap:wrap;gap:8px">` +
-      (pn ? `<span style="background:${dark};color:#ffffff;border-radius:3px;padding:5px 10px;font-size:13px"><b style="color:${accent}">PART #</b> ${txt(pn)}</span>` : "") +
-      (input.condition ? `<span style="background:#f3f4f6;border-radius:3px;padding:5px 10px;font-size:13px"><b>CONDITION</b> ${txt(input.condition)}</span>` : "") +
-      `</div></div></div>`,
+    wrap(
+      `<div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start">` +
+        (pics[0]
+          ? `<div style="flex:1 1 360px;min-width:0">` +
+            `<div style="position:relative;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;background:#ffffff">` +
+            `<div style="position:absolute;top:14px;left:-6px;background:${R};color:#ffffff;font-size:12px;font-weight:900;${caps(1.5)};padding:6px 14px 6px 16px;box-shadow:0 2px 6px rgba(0,0,0,0.25)">Genuine OEM</div>` +
+            `<img src="${esc(pics[0])}" alt="${esc(input.title)}" style="display:block;width:100%;height:auto"></div>` +
+            (pics.length > 1
+              ? `<div style="display:flex;gap:8px;margin-top:8px">` +
+                pics
+                  .slice(1, 5)
+                  .map((p) => `<div style="flex:1 1 0;min-width:0;border:1px solid #e5e7eb;border-radius:4px;overflow:hidden"><img src="${esc(p)}" alt="" style="display:block;width:100%;height:auto"></div>`)
+                  .join("") +
+                `</div>`
+              : "") +
+            `</div>`
+          : "") +
+        `<div style="flex:1 1 360px;min-width:0">` +
+        `<div style="display:inline-block;background:${D};color:#ffffff;font-size:11px;font-weight:900;${caps(2)};padding:5px 10px;border-left:4px solid ${R}">${esc(brandName)} &middot; Auto parts</div>` +
+        `<h1 style="margin:12px 0 12px;font-size:30px;line-height:1.15;font-weight:900;color:${D}">${txt(c.headline)}</h1>` +
+        (price ? `<div style="font-size:28px;font-weight:900;color:${R};margin:0 0 10px">${esc(price)}</div>` : "") +
+        `<p style="margin:0 0 18px;font-size:16px;color:#374151">${multiline(c.intro)}</p>` +
+        (facts.length
+          ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 0 18px">` +
+            facts
+              .map(
+                ([k, v]) =>
+                  `<div style="flex:1 1 140px;min-width:0;background:#f9fafb;border:1px solid #e5e7eb;border-top:3px solid ${R};border-radius:3px;padding:9px 12px">` +
+                  `<div style="font-size:11px;color:#6b7280;${caps(1)}">${esc(k)}</div><div style="font-weight:900;color:${D};word-break:break-word">${txt(v)}</div></div>`,
+              )
+              .join("") +
+            `</div>`
+          : "") +
+        `<div style="${texture};color:#ffffff;border-radius:4px;padding:16px 18px;border-left:5px solid ${R}">` +
+        `<div style="font-weight:900;${caps(1)};font-size:14px;margin-bottom:4px">&#10003; Fitment check</div>` +
+        `<div style="font-size:14px;color:#e5e7eb;margin-bottom:12px">Not sure it fits? Send us your VIN before you buy and we will confirm it for you.</div>` +
+        btn(links.contact, "Check my vehicle") +
+        `</div></div></div>`,
+    ),
   );
 
+  // ---- 5. why buy (numbered cards)
   if (highlights.length) {
     out.push(
-      section(
-        h2("Why buy this part") +
-          `<div style="display:flex;flex-wrap:wrap;gap:10px">` +
+      wrap(
+        title("The details", "Why buy this part") +
+          `<div style="display:flex;flex-wrap:wrap;gap:14px">` +
           highlights
-            .map((h) => `<div style="flex:1 1 260px;min-width:0;background:#f9fafb;border-left:3px solid ${accent};padding:10px 12px">${tick}${esc(h)}</div>`)
+            .map(
+              (h, i) =>
+                `<div style="flex:1 1 280px;min-width:0;display:flex;gap:14px;align-items:flex-start;background:#ffffff;border:1px solid #e5e7eb;border-radius:4px;padding:16px;box-shadow:0 2px 0 ${R}">` +
+                `<div style="flex:0 0 auto;font-family:'Arial Black',Arial,sans-serif;font-size:28px;font-weight:900;font-style:italic;color:${R};line-height:1">${String(i + 1).padStart(2, "0")}</div>` +
+                `<div style="font-size:15px;color:${D};font-weight:bold">${esc(h)}</div></div>`,
+            )
             .join("") +
           `</div>`,
+        "#f9fafb",
       ),
     );
   }
 
-  if (pics.length > 1) {
-    out.push(
-      section(
-        h2("More photos") +
-          `<div style="display:flex;flex-wrap:wrap;gap:8px">` +
-          pics
-            .slice(1, 7)
-            .map((p) => `<div style="flex:1 1 140px;max-width:230px"><img src="${esc(p)}" alt="" style="width:100%;height:auto;border:1px solid #e5e7eb;border-radius:3px"></div>`)
-            .join("") +
-          `</div>`,
-      ),
-    );
-  }
-
-  // specs + fitment side by side
+  // ---- 6. specs + fitment on a dark band
   const specHtml = specs.length
-    ? `<div style="flex:1 1 360px;min-width:0">${h2("Specifications")}<table style="width:100%;border-collapse:collapse;font-size:14px">` +
-      specs
-        .map(
-          ([k, v], i) =>
-            `<tr style="background:${i % 2 ? "#ffffff" : "#f9fafb"}"><td style="${td};width:42%;color:#6b7280">${txt(k)}</td><td style="${td};font-weight:bold;color:${dark}">${txt(v)}</td></tr>`,
-        )
-        .join("") +
+    ? `<div style="flex:1 1 400px;min-width:0;background:#ffffff;border-radius:4px;overflow:hidden">` +
+      `<div style="background:${R};color:#ffffff;font-weight:900;${caps(1.5)};padding:11px 14px;font-size:14px">Specifications</div>` +
+      `<table style="width:100%;border-collapse:collapse">` +
+      specs.map(([k, v]) => `<tr><td style="${td};width:42%;color:#6b7280">${txt(k)}</td><td style="${td};font-weight:bold;color:${D}">${txt(v)}</td></tr>`).join("") +
       `</table></div>`
     : "";
   const fitHtml =
     c.fitment_summary.trim() || shownGroups.length
-      ? `<div style="flex:1 1 360px;min-width:0">${h2("Fitment")}` +
-        (c.fitment_summary.trim() ? `<p style="margin:0 0 10px">${multiline(c.fitment_summary)}</p>` : "") +
+      ? `<div style="flex:1 1 400px;min-width:0;background:#ffffff;border-radius:4px;overflow:hidden">` +
+        `<div style="background:${R};color:#ffffff;font-weight:900;${caps(1.5)};padding:11px 14px;font-size:14px">Vehicle fitment</div>` +
+        (c.fitment_summary.trim() ? `<p style="margin:0;padding:12px 14px;font-size:14px;color:#374151;border-bottom:1px solid #e5e7eb">${multiline(c.fitment_summary)}</p>` : "") +
         (shownGroups.length
-          ? `<table style="width:100%;border-collapse:collapse;font-size:14px">${tableHead(["Vehicle", "Years"])}` +
-            shownGroups
-              .map(
-                (g, i) =>
-                  `<tr style="background:${i % 2 ? "#ffffff" : "#f9fafb"}"><td style="${td};font-weight:bold;color:${dark}">${txt(g.vehicle)}</td><td style="${td}">${esc(g.years)}</td></tr>`,
-              )
-              .join("") +
+          ? `<table style="width:100%;border-collapse:collapse"><tr style="background:#f3f4f6"><th style="${td};text-align:left;font-size:12px;${caps(1)};color:#6b7280">Vehicle</th><th style="${td};text-align:left;font-size:12px;${caps(1)};color:#6b7280">Years</th></tr>` +
+            shownGroups.map((g) => `<tr><td style="${td};font-weight:bold;color:${D}">${txt(g.vehicle)}</td><td style="${td}">${esc(g.years)}</td></tr>`).join("") +
             `</table>` +
             (groups.length > shownGroups.length
-              ? `<p style="margin:6px 0 0;font-size:13px;color:#6b7280">+ ${groups.length - shownGroups.length} more models - see the compatibility chart on this listing.</p>`
-              : c.fitment_summary.trim()
-                ? ""
-                : `<p style="margin:6px 0 0;font-size:13px;color:#6b7280">Always check the part number and the eBay compatibility chart before buying.</p>`)
+              ? `<p style="margin:0;padding:10px 14px;font-size:13px;color:#6b7280">+ ${groups.length - shownGroups.length} more models - see the compatibility chart on this listing.</p>`
+              : "")
           : "") +
         `</div>`
       : "";
-  if (specHtml || fitHtml) out.push(`<div style="display:flex;flex-wrap:wrap;gap:22px;margin:0 0 26px">${specHtml}${fitHtml}</div>`);
-
-  if (c.condition_notes.trim()) {
-    out.push(section(h2("Condition") + `<div style="background:#fef2f2;border-left:4px solid ${accent};padding:12px 14px">${multiline(c.condition_notes)}</div>`));
+  if (specHtml || fitHtml) {
+    out.push(wrap(title("Know before you buy", "Specs & fitment", true) + `<div style="display:flex;flex-wrap:wrap;gap:18px">${specHtml}${fitHtml}</div>`, "", `34px 24px;${texture}`));
   }
 
-  if (included.length || c.install_tips.trim()) {
+  // ---- 7. condition + included
+  const condBox = c.condition_notes.trim()
+    ? `<div style="flex:1 1 380px;min-width:0;border:1px solid #e5e7eb;border-radius:4px;padding:20px;border-top:4px solid ${R}">` +
+      `<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">${icon("&#9881;", 34, D)}<div style="font-weight:900;font-size:17px;color:${D};${caps(1)}">Condition</div></div>` +
+      `<div style="font-size:15px;color:#374151">${multiline(c.condition_notes)}</div></div>`
+    : "";
+  const inclBox =
+    included.length || c.install_tips.trim()
+      ? `<div style="flex:1 1 380px;min-width:0;border:1px solid #e5e7eb;border-radius:4px;padding:20px;border-top:4px solid ${R}">` +
+        `<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">${icon("&#9638;", 34, D)}<div style="font-weight:900;font-size:17px;color:${D};${caps(1)}">What's in the box</div></div>` +
+        (included.length
+          ? included.map((i) => `<div style="padding:5px 0;border-bottom:1px dashed #e5e7eb;font-size:15px"><span style="color:${R};font-weight:900;margin-right:8px">&#10003;</span>${esc(i)}</div>`).join("")
+          : "") +
+        (c.install_tips.trim()
+          ? `<div style="margin-top:12px;background:#fef2f2;border-left:4px solid ${R};padding:10px 12px;font-size:14px"><b style="color:${R}">PRO TIP:</b> ${txt(c.install_tips)}</div>`
+          : "") +
+        `</div>`
+      : "";
+  if (condBox || inclBox) out.push(wrap(`<div style="display:flex;flex-wrap:wrap;gap:18px">${condBox}${inclBox}</div>`));
+
+  // ---- 8. how your order works
+  const steps = [
+    ["&#10003;", "You order", "Buy it now - we get your order straight away."],
+    ["&#9881;", "We inspect & pack", "Every part is checked and packed to arrive safely."],
+    ["&#10148;", "Fast dispatch", cleanText(b.shippingText) || "Shipped within the handling time with tracking."],
+    ["&#9733;", "Enjoy the ride", "Fit your part and get back on the road."],
+  ];
+  out.push(
+    wrap(
+      title("Simple & safe", "How your order works") +
+        `<div style="display:flex;flex-wrap:wrap;gap:14px">` +
+        steps
+          .map(
+            ([g, h, t], i) =>
+              `<div style="flex:1 1 200px;min-width:0;text-align:center;padding:10px">` +
+              `<div style="position:relative;display:inline-block">${icon(g, 64, i % 2 ? D : R)}` +
+              `<span style="position:absolute;top:-4px;right:-6px;background:#ffffff;color:${D};border:2px solid ${D};border-radius:50%;width:24px;height:24px;line-height:20px;font-size:12px;font-weight:900">${i + 1}</span></div>` +
+              `<div style="margin-top:12px;font-weight:900;color:${D};${caps(1)};font-size:15px">${esc(h)}</div>` +
+              `<div style="margin-top:4px;font-size:14px;color:#4b5563">${esc(t)}</div></div>`,
+          )
+          .join("") +
+        `</div>`,
+      "#f9fafb",
+    ),
+  );
+
+  // ---- 9. FAQ
+  if (faqs.length) {
     out.push(
-      section(
-        h2("What's included") +
-          (included.length ? `<ul style="margin:0 0 10px;padding-left:20px">${included.map((i) => `<li style="margin:2px 0">${esc(i)}</li>`).join("")}</ul>` : "") +
-          (c.install_tips.trim() ? `<p style="margin:0;font-size:14px;color:#374151"><b style="color:${accent}">TIP:</b> ${txt(c.install_tips)}</p>` : ""),
+      wrap(
+        title("Questions", "Frequently asked") +
+          faqs
+            .map(
+              (f) =>
+                `<div style="border:1px solid #e5e7eb;border-left:5px solid ${R};border-radius:3px;margin:0 0 10px;padding:14px 16px">` +
+                `<div style="font-weight:900;color:${D};font-size:15px"><span style="color:${R};margin-right:8px">Q.</span>${esc(f.q)}</div>` +
+                `<div style="margin-top:6px;font-size:14px;color:#374151"><span style="color:${D};font-weight:900;margin-right:8px">A.</span>${esc(f.a)}</div></div>`,
+            )
+            .join(""),
       ),
     );
   }
 
+  // ---- 10. policies
   const policies = [
-    ["Shipping", b.shippingText],
-    ["Returns", b.returnsText],
-    ["Warranty", b.warrantyText],
-    ["Questions?", b.contactText],
-  ].filter(([, t]) => cleanText(t));
+    ["&#10148;", "Shipping", b.shippingText],
+    ["&#8634;", "Returns", b.returnsText],
+    ["&#9733;", "Warranty", b.warrantyText],
+    ["?", "Questions", b.contactText],
+  ].filter(([, , t]) => cleanText(t));
   if (policies.length) {
-    out.push(section(`<div style="display:flex;flex-wrap:wrap;gap:12px">${policies.map(([t, body]) => card(t, body)).join("")}</div>`));
+    out.push(
+      wrap(
+        `<div style="display:flex;flex-wrap:wrap;gap:14px">` +
+          policies
+            .map(
+              ([g, h, t]) =>
+                `<div style="flex:1 1 210px;min-width:0;background:#ffffff;border-radius:4px;padding:18px;text-align:center;border-bottom:4px solid ${R}">` +
+                icon(g, 46) +
+                `<div style="margin-top:10px;font-weight:900;color:${D};${caps(1)}">${esc(h)}</div>` +
+                `<div style="margin-top:4px;font-size:14px;color:#4b5563">${multiline(t)}</div></div>`,
+            )
+            .join("") +
+          `</div>`,
+        "#f3f4f6",
+      ),
+    );
   }
 
+  // ---- 11. you may also like
+  if (related.length) {
+    out.push(
+      wrap(
+        title(`More from ${brandName}`, "You may also like") +
+          `<div style="display:flex;flex-wrap:wrap;gap:14px">` +
+          related
+            .map((r) =>
+              a(
+                links.item(r.itemId),
+                `<div style="height:170px;background:#ffffff;display:flex;align-items:center;justify-content:center;overflow:hidden;border-bottom:3px solid ${R}">` +
+                  `<img src="${esc(r.imageUrl)}" alt="" style="max-width:100%;max-height:170px;display:block"></div>` +
+                  `<div style="padding:12px">` +
+                  `<div style="font-size:13px;line-height:1.35;color:${D};font-weight:bold;height:53px;overflow:hidden">${txt(r.title)}</div>` +
+                  `<div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:6px">` +
+                  `<span style="font-size:18px;font-weight:900;color:${R}">${esc(money(r.price, input.currency))}</span>` +
+                  `<span style="background:${D};color:#ffffff;font-size:11px;font-weight:900;${caps(1)};padding:6px 10px;border-radius:3px">View</span></div></div>`,
+                `flex:1 1 200px;min-width:0;max-width:240px;display:block;background:#ffffff;border:1px solid #e5e7eb;border-radius:4px;overflow:hidden;color:${D}`,
+              ),
+            )
+            .join("") +
+          `</div>` +
+          `<div style="text-align:center;margin-top:22px">${btn(links.all, `Shop all ${brandName} parts`, "dark")}</div>`,
+      ),
+    );
+  }
+
+  // ---- 12. seller notes
   if (notes) {
-    out.push(section(h2("Seller notes") + `<div style="font-size:14px;color:#374151">${NOTES_START}${esc(notes).replace(/\n/g, "<br>")}${NOTES_END}</div>`));
+    out.push(
+      wrap(
+        `<div style="border:1px dashed #d1d5db;border-radius:4px;padding:16px">` +
+          `<div style="font-weight:900;color:${D};${caps(1)};margin-bottom:6px">Seller notes</div>` +
+          `<div style="font-size:14px;color:#374151">${NOTES_START}${esc(notes).replace(/\n/g, "<br>")}${NOTES_END}</div></div>`,
+        "#ffffff",
+        "0 24px 30px",
+      ),
+    );
   }
 
-  out.push(`</div>`); // body
-
-  // footer: dark band, red rule, spaced "thank you" line + small wordmark
+  // ---- 13. footer
   out.push(
-    `<div style="background:${dark};color:#ffffff;padding:16px 24px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px">` +
-      `<div style="font-size:12px;font-weight:bold;${caps()}">` +
-      `<span style="display:inline-block;width:34px;height:3px;background:${accent};vertical-align:middle;margin-right:10px"></span>` +
+    `<div style="${texture};color:#d1d5db;padding:30px 24px 0">` +
+      `<div style="display:flex;flex-wrap:wrap;gap:24px;justify-content:space-between">` +
+      `<div style="flex:1 1 260px;min-width:0">${wordmark(brandName, b.brandHighlight, R, 26)}` +
+      (b.tagline.trim() ? `<div style="margin-top:8px;font-size:12px;${caps(3)};color:#9ca3af">${txt(b.tagline)}</div>` : "") +
+      `<div style="margin-top:14px">${btn(links.home, "Visit our store")}</div></div>` +
+      `<div style="flex:0 1 180px;min-width:0"><div style="color:#ffffff;font-weight:900;${caps(1.5)};margin-bottom:8px;border-bottom:2px solid ${R};padding-bottom:6px">Quick links</div>` +
+      nav.map(([l, h]) => `<div style="padding:3px 0">${a(h, `&rsaquo; ${esc(l)}`, "color:#d1d5db;font-size:14px")}</div>`).join("") +
+      `</div>` +
+      `<div style="flex:0 1 220px;min-width:0"><div style="color:#ffffff;font-weight:900;${caps(1.5)};margin-bottom:8px;border-bottom:2px solid ${R};padding-bottom:6px">Why ${esc(brandName)}</div>` +
+      (badges.length ? badges : ["Genuine OEM parts"]).map((t) => `<div style="padding:3px 0;font-size:14px"><span style="color:${R};font-weight:900">&#10003;</span> ${esc(t)}</div>`).join("") +
+      `</div></div>` +
+      `<div style="margin-top:26px;background:${R};margin-left:-24px;margin-right:-24px;padding:12px 24px;text-align:center;color:#ffffff;font-size:13px;font-weight:900;${caps(4)}">` +
       `${txt(b.footerText || `Thank you for shopping with ${brandName}`)}</div>` +
-      `<div>${wordmark(brandName, b.brandHighlight, accent, 18)}</div>` +
       `</div>`,
   );
+
   out.push(`</div>`);
   return out.join("\n");
 }

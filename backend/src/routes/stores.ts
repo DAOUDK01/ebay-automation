@@ -149,7 +149,12 @@ router.get("/:id/shipping-policies", async (req, res) => {
 router.post("/:id/description-preview", async (req, res) => {
   const store = await loadStore(req);
   const brand = parseBody(descriptionSchema, req.body);
-  const withPhoto: any = await Listing.findOne({ storeId: store._id, imageUrl: { $regex: "^https://" } }).lean();
+  const others: any[] = await Listing.find({ storeId: store._id, active: true, imageUrl: { $regex: "^https://" }, price: { $gt: 0 } })
+    .select("itemId title price imageUrl quantitySold")
+    .sort({ quantitySold: -1 })
+    .limit(12)
+    .lean();
+  const withPhoto = others[0];
   const html = renderAplus({
     content: {
       headline: "Genuine Honda Civic Front Left Headlight",
@@ -164,6 +169,11 @@ router.post("/:id/description-preview", async (req, res) => {
       condition_notes: "Used part in good working condition. Light surface scratches on the lens from normal use - see photos.",
       included: ["Headlight assembly only", "Bulbs not included"],
       install_tips: "Remove the front bumper cover to reach the headlight bolts.",
+      faqs: [
+        { q: "Will this fit my 2019 Civic hatchback?", a: "Yes, if your car has halogen headlights. LED-equipped trims use a different part - message us with your VIN to be sure." },
+        { q: "Are the bulbs included?", a: "No, this is the headlight assembly only. You can move the bulbs over from your old unit." },
+        { q: "Is this a genuine Honda part?", a: "Yes, it is a used genuine OEM Honda part, part number 33150-TBA-A01." },
+      ],
     },
     title: "2016-2021 Honda Civic Front Left Headlight 33150-TBA-A01 OEM Used",
     condition: "Used",
@@ -180,6 +190,10 @@ router.post("/:id/description-preview", async (req, res) => {
     currentHtml: "<p>Pulled from a 2018 Civic, 62k miles. Ships in 2 business days.</p>",
     brand,
     storeName: store.ebayUserId || store.name,
+    sellerId: store.ebayUserId,
+    price: 89.99,
+    currency: "USD",
+    related: others.slice(1, 1 + brand.relatedCount),
   });
   res.json({ html });
 });

@@ -45,6 +45,7 @@ export interface DescriptionContent {
   condition_notes: string;
   included: string[];
   install_tips: string;
+  faqs: { q: string; a: string }[];
 }
 
 export const SYSTEM_PROMPT = `You are an expert eBay listing optimizer for an eBay store. For each listing you
@@ -147,6 +148,9 @@ the words only (plain text, no HTML, no links, no emails/phone numbers, no emoji
 - included: what's in the box, only what the listing supports (e.g. "Headlight assembly only - bulbs
   not included" if stated); [] if unknown.
 - install_tips: one short practical tip, or "" if nothing useful.
+- faqs: 3-4 short questions buyers of THIS part really ask (fit, condition, what is included, part
+  number / interchange, wiring or connectors) with short honest answers based only on the data;
+  say "Message us with your VIN" when fitment depends on options.
 - "current_description_text" (if present) is the listing's current description as plain text: keep its
   important facts (condition, what's included, notes) in your content.
 
@@ -214,8 +218,17 @@ export const SUGGESTION_SCHEMA = {
         condition_notes: { type: "string" },
         included: { type: "array", items: { type: "string" } },
         install_tips: { type: "string" },
+        faqs: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { q: { type: "string" }, a: { type: "string" } },
+            required: ["q", "a"],
+            additionalProperties: false,
+          },
+        },
       },
-      required: ["headline", "intro", "highlights", "fitment_summary", "condition_notes", "included", "install_tips"],
+      required: ["headline", "intro", "highlights", "fitment_summary", "condition_notes", "included", "install_tips", "faqs"],
       additionalProperties: false,
     },
     other_notes: { type: "string" },

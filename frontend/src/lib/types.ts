@@ -69,6 +69,11 @@ export interface DescriptionBrand {
   darkColor: string;
   badges: string[];
   footerText: string;
+  bannerUrl: string;
+  storeUrl: string;
+  showRelated: boolean;
+  relatedCount: number;
+  showFaq: boolean;
   showPhotos: boolean;
   showCompatibility: boolean;
   keepOriginalNotes: boolean;

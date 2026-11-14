@@ -6,7 +6,8 @@ import { userAccessToken } from "../lib/ebay/auth";
 import { RestClient } from "../lib/ebay/rest";
 import { TradingClient } from "../lib/ebay/trading";
 import type { EbayItem, FitmentRow, ListingChanges, ShippingAnalysis, ShippingPolicy } from "../lib/ebay/types";
-import { hasContent, isAplus, renderAplus } from "../lib/description";
+import { groupFitment, hasContent, isAplus, renderAplus } from "../lib/description";
+import { keywords, rankRelated, type RelatedItem } from "../lib/related";
 import { buildFitmentRows, gatherFitmentEvidence, type FitmentDeps } from "../lib/fitment";
 import { analyzeShipping, withKg } from "../lib/shipping";
 import { checkCompatibility, checkPrice, checkSpecifics, checkTitle } from "../lib/guardrails";
@@ -90,6 +91,30 @@ export async function syncIfDue(store: StoreDocument, deps: PipelineDeps) {
   }
 }
 
+// ---------------------------------------------------------------- related items
+/** Other active items from the store for "You may also like" (same vehicle first, then shared part words). */
+export async function findRelated(storeId: Types.ObjectId, item: EbayItem, count: number): Promise<RelatedItem[]> {
+  try {
+    const top = groupFitment(item.compatibilityAll ?? item.compatibilitySample ?? [])[0]?.vehicle ?? "";
+    const vehicle = (top ? top.split(" ") : keywords(item.title).slice(0, 2)).filter((w) => w.length > 1);
+    const esc = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const base = { storeId, active: true, itemId: { $ne: item.itemId }, imageUrl: /^https:\/\//, price: { $gt: 0 } };
+    const fields = "itemId title price imageUrl quantitySold";
+    let pool: RelatedItem[] = [];
+    // same make + model, then same model, then best sellers
+    for (const words of [vehicle, vehicle.slice(-1)]) {
+      if (!words.length || pool.length >= count * 3) continue;
+      const q = { ...base, $and: words.map((w) => ({ title: { $regex: `\\b${esc(w)}\\b`, $options: "i" } })) };
+      pool = pool.concat((await Listing.find(q).select(fields).sort({ quantitySold: -1 }).limit(150).lean()) as any);
+    }
+    if (pool.length < count) pool = pool.concat((await Listing.find(base).select(fields).sort({ quantitySold: -1, watchCount: -1 }).limit(40).lean()) as any);
+    return rankRelated(item, vehicle, pool, count);
+  } catch (e: any) {
+    logger.warn(`related items lookup failed: ${e?.message ?? e}`);
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------- one listing
 export function buildChanges(
   item: EbayItem,
@@ -100,7 +125,7 @@ export function buildChanges(
   fitmentRows: FitmentRow[] = [],
   specificsEvidenceNames: string[] = [],
   shipping: ShippingAnalysis | null = null,
-  storeName = "",
+  ctx: { storeName?: string; sellerId?: string; related?: RelatedItem[] } = {},
 ): { changes: ListingChanges; notes: string[]; suggestedCompat: FitmentRow[] } {
   const changes: ListingChanges = {};
   const notes: string[] = [];
@@ -140,7 +165,11 @@ export function buildChanges(
         compatibility: [...(item.compatibilityAll ?? item.compatibilitySample ?? []), ...(changes.compatibilityAdd ?? [])],
         currentHtml: item.descriptionHtml,
         brand: d,
-        storeName,
+        storeName: ctx.storeName ?? "",
+        sellerId: ctx.sellerId,
+        price: changes.price ?? item.price,
+        currency: item.currency,
+        related: ctx.related,
       });
       if (html !== item.descriptionHtml) {
         changes.description = html;
@@ -225,7 +254,11 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
     fit.rows,
     evidence.specifics.map((e) => e.name),
     shipping,
-    store.ebayUserId || store.name,
+    {
+      storeName: store.ebayUserId || store.name,
+      sellerId: store.ebayUserId,
+      related: s.modules.description.enabled && s.modules.description.showRelated ? await findRelated(store._id, item, s.modules.description.relatedCount) : [],
+    },
   );
   const status = Object.keys(changes).length ? "proposed" : "no_change";
   const withFitment = evidence.references.filter((r) => r.rowCount > 0).length;

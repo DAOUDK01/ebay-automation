@@ -9,10 +9,12 @@ import {
   hasContent,
   originalNotes,
   renderAplus,
+  storeLinks,
   wordmark,
   yearRuns,
 } from "../src/lib/description";
 import type { EbayItem } from "../src/lib/ebay/types";
+import { keywords, rankRelated } from "../src/lib/related";
 import { DEFAULT_SETTINGS, resolveSettings } from "../src/models/Store";
 import { buildChanges } from "../src/services/pipeline";
 
@@ -25,6 +27,7 @@ const content: DescriptionContent = {
   condition_notes: "Light scratches.",
   included: ["Headlight only"],
   install_tips: "",
+  faqs: [{ q: "Are bulbs included?", a: "No - see www.x.com" }],
 };
 const base = {
   content,
@@ -107,9 +110,11 @@ test("pipeline: description change built from final specifics + added fitment", 
   } as unknown as EbayItem;
   const suggestion: any = { title: item.title, recommended_price: 0, item_specifics: [], description_content: content };
   const s = structuredClone(DEFAULT_SETTINGS);
-  const { changes, notes } = buildChanges(item, suggestion, [], null, s, [], [], null, "partsco");
+  const { changes, notes } = buildChanges(item, suggestion, [], null, s, [], [], null, { storeName: "partsco", sellerId: "partsco", related: [{ itemId: "9", title: "Civic Mirror", price: 40, imageUrl: "https://i.ebayimg.com/m.jpg" }] });
   assert.ok(changes.description?.includes("Genuine Honda Civic Front Left Headlight"));
   assert.ok(notes.includes("description: new branded A+ content"));
+  assert.ok(changes.description?.includes("https://www.ebay.com/itm/9"), "related item linked");
+  assert.ok(changes.description?.includes("$100.00"), "price shown");
   s.modules.description.enabled = false;
   assert.equal(buildChanges(item, suggestion, [], null, s).changes.description, undefined);
   s.modules.description.enabled = true;
@@ -135,4 +140,44 @@ test("store branding: wordmark highlight, badges, footer, old blue defaults migr
   const custom = resolveSettings({ modules: { description: { ...brand, brandName: "My Shop", accentColor: "#1e3a8a" } } } as any).modules.description;
   assert.equal(custom.brandName, "My Shop");
   assert.equal(custom.accentColor, "#1e3a8a");
+});
+
+test("full template: menu links only to eBay, FAQ, related items, banner", () => {
+  const html = renderAplus({
+    ...base,
+    sellerId: "motorsupply co",
+    price: 89.5,
+    currency: "USD",
+    brand: { ...brand, bannerUrl: "https://i.ebayimg.com/banner.jpg", storeUrl: "https://evil.com/x" },
+    related: [
+      { itemId: "111", title: "Honda Civic Tail Light", price: 55, imageUrl: "https://i.ebayimg.com/t.jpg" },
+      { itemId: "222", title: "No photo", price: 10, imageUrl: "http://x/y.jpg" },
+    ],
+  });
+  const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(hrefs.length > 5);
+  assert.ok(hrefs.every((h) => h.startsWith("https://www.ebay.com/")), "every link stays on eBay");
+  assert.ok(hrefs.includes("https://www.ebay.com/sch/i.html?_ssn=motorsupply%20co"), "bad store link falls back");
+  assert.ok(html.includes("https://www.ebay.com/itm/111") && !html.includes("/itm/222"));
+  assert.ok(html.includes("https://i.ebayimg.com/banner.jpg"));
+  assert.ok(html.includes("Are bulbs included?") && !html.includes("www.x.com"));
+  assert.ok(html.includes("$89.50"));
+  assert.ok(html.includes("You may also like") && html.includes("How your order works"));
+  const off = renderAplus({ ...base, brand: { ...brand, showFaq: false, showRelated: false }, related: [{ itemId: "111", title: "x", price: 1, imageUrl: "https://a/b.jpg" }] });
+  assert.ok(!off.includes("Frequently asked") && !off.includes("You may also like"));
+  assert.equal(storeLinks("me", "https://www.ebay.com/str/mystore").home, "https://www.ebay.com/str/mystore");
+});
+
+test("related items: same vehicle and part words rank first, no dupes/self/no-photo", () => {
+  assert.deepEqual(keywords("2016-2021 Honda Civic Front Left Headlight 33150-TBA-A01 OEM Used"), ["honda", "civic", "headlight"]);
+  const c = (itemId: string, title: string, extra = {}) => ({ itemId, title, price: 20, imageUrl: "https://i/x.jpg", ...extra });
+  const out = rankRelated({ itemId: "1", title: "2016-2021 Honda Civic Headlight OEM Used" }, ["Honda", "Civic"], [
+    c("1", "self"),
+    c("2", "Toyota Camry Headlight"),
+    c("3", "2017 Honda Civic Tail Light"),
+    c("4", "2017 Honda Civic Tail Light"),
+    c("5", "Ford F150 Mirror", { quantitySold: 50 }),
+    c("6", "Honda Civic Headlight Right", { imageUrl: "" }),
+  ], 3);
+  assert.deepEqual(out.map((x) => x.itemId), ["3", "2", "5"]);
 });

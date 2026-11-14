@@ -68,6 +68,14 @@ export interface StoreSettings {
       /** up to 4 trust badges under the header */
       badges: string[];
       footerText: string;
+      /** https link to the store banner image (shown full width under the menu) */
+      bannerUrl: string;
+      /** eBay store link for the menu, e.g. https://www.ebay.com/str/yourstore ("" = all items search) */
+      storeUrl: string;
+      /** "You may also like": other items from this store */
+      showRelated: boolean;
+      relatedCount: number;
+      showFaq: boolean;
       showPhotos: boolean;
       showCompatibility: boolean;
       keepOriginalNotes: boolean;
@@ -136,6 +144,11 @@ export function DEFAULT_DESCRIPTION(): StoreSettings["modules"]["description"] {
     darkColor: "#0b0f19",
     badges: ["Quality parts", "Fast shipping", "Wide selection", "Global delivery"],
     footerText: "Thank you for your business.",
+    bannerUrl: "",
+    storeUrl: "",
+    showRelated: true,
+    relatedCount: 4,
+    showFaq: true,
     showPhotos: true,
     showCompatibility: true,
     keepOriginalNotes: true,

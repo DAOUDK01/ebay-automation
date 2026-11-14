@@ -125,6 +125,19 @@ export function DescriptionBrandingCard({
             </Field>
           </div>
           <div className="sm:col-span-2">
+            <Field
+              label="Store banner image URL (recommended)"
+              hint="Your eBay store banner: open your store, right-click the big banner → Copy image address. Shown full width at the top. Empty = a built-in banner in your colours."
+            >
+              <input className="input" value={d.bannerUrl ?? ""} maxLength={500} placeholder="https://i.ebayimg.com/…" onChange={(e) => onChange("bannerUrl", e.target.value.trim())} />
+            </Field>
+          </div>
+          <div className="sm:col-span-2">
+            <Field label="eBay store link (optional)" hint="e.g. https://www.ebay.com/str/yourstore - used by the menu buttons. Empty = your 'all items' page.">
+              <input className="input" value={d.storeUrl ?? ""} maxLength={300} placeholder="https://www.ebay.com/str/…" onChange={(e) => onChange("storeUrl", e.target.value.trim())} />
+            </Field>
+          </div>
+          <div className="sm:col-span-2">
             <Field label="Trust badges (up to 4)" hint="Shown in a strip under the header. Leave a box empty to hide it.">
               <div className="grid gap-2 sm:grid-cols-4">
                 {[0, 1, 2, 3].map((i) => (
@@ -155,6 +168,26 @@ export function DescriptionBrandingCard({
         </p>
 
         <div className="ml-11 space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Toggle
+              checked={d.showRelated ?? true}
+              onChange={(v) => onChange("showRelated", v)}
+              label='"You may also like" - show other items from your store (same vehicle first)'
+            />
+            <select
+              className="input w-auto py-1"
+              value={d.relatedCount ?? 4}
+              disabled={d.showRelated === false}
+              onChange={(e) => onChange("relatedCount", Number(e.target.value))}
+            >
+              {[2, 3, 4, 6, 8].map((n) => (
+                <option key={n} value={n}>
+                  {n} items
+                </option>
+              ))}
+            </select>
+          </div>
+          <Toggle checked={d.showFaq ?? true} onChange={(v) => onChange("showFaq", v)} label="Show a FAQ section (Claude writes 3-4 buyer questions per part)" />
           <Toggle checked={d.showPhotos} onChange={(v) => onChange("showPhotos", v)} label="Show the listing's photos in the description" />
           <Toggle checked={d.showCompatibility} onChange={(v) => onChange("showCompatibility", v)} label="Show a fitment table (vehicles grouped by model with years)" />
           <Toggle

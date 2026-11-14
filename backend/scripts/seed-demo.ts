@@ -76,6 +76,8 @@ async function main() {
       quantitySold: (i * 7) % 23,
       watchCount: (i * 3) % 11,
       listingType: "FixedPriceItem",
+      // demo-only placeholder photo so "You may also like" has something to show
+      imageUrl: `https://placehold.co/400x300/0b0f19/ffffff/png?text=${encodeURIComponent(String(title).split(" ").slice(0, 3).join(" "))}`,
       active: true,
       lastSyncedAt: new Date(),
       lastProcessedAt: i < 5 ? new Date(now - i * 3600_000) : null,
@@ -138,6 +140,10 @@ async function main() {
             condition_notes: "Used with plenty of pad material left. See photos for the exact condition.",
             included: ["4 front brake pads"],
             install_tips: "Push the caliper piston back slowly before fitting the new pads.",
+            faqs: [
+              { q: "Do these fit the Civic Si?", a: "No - the Si uses larger brakes. Message us with your VIN to be sure." },
+              { q: "Are the wear sensors included?", a: "No, pads only." },
+            ],
           },
           title: "2016-2021 Honda Civic Front Brake Pad Set",
           condition: "Used",

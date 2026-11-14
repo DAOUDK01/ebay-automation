@@ -12,6 +12,13 @@ export const descriptionSchema = z.object({
   darkColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "color must look like #0b0f19").default("#0b0f19"),
   badges: z.array(z.string().max(40)).max(4).default([]),
   footerText: z.string().max(120).default(""),
+  bannerUrl: z.union([z.literal(""), z.string().url().max(500).startsWith("https://", "banner URL must start with https://")]).default(""),
+  storeUrl: z
+    .union([z.literal(""), z.string().max(300).regex(/^https:\/\/(www\.)?ebay\.[a-z.]+\//i, "store link must be an https://www.ebay.com/... address")])
+    .default(""),
+  showRelated: z.boolean().default(true),
+  relatedCount: z.number().int().min(2).max(8).default(4),
+  showFaq: z.boolean().default(true),
   showPhotos: z.boolean(),
   showCompatibility: z.boolean(),
   keepOriginalNotes: z.boolean(),
