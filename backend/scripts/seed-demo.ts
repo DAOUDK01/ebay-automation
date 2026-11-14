@@ -125,10 +125,10 @@ async function main() {
     p(
       0,
       "proposed",
-      { title: "2016-2021 Honda Civic Front Brake Pad Set Ceramic 45022-TBA-A01 Used OEM", price: 37.49 },
+      { title: "2016-2021 Honda Civic Front Brake Pad Set Ceramic 45022-TBA-A01 OEM Used", price: 37.49 },
       {
         suggestion: {
-          title_reason: "Follows the store format: years, brand, model, part & position, part number, Used OEM.",
+          title_reason: "Follows the store format: years, brand, model, part & position, part number, OEM Used.",
           price_reason: "Closest matches sell for $35-$39 with free shipping.",
           confidence: "high",
           suggested_compatibility_rows: [

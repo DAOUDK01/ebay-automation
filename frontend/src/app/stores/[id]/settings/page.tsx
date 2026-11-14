@@ -252,7 +252,7 @@ export default function SettingsPage() {
                 hint={
                   <>
                     Parts in <code className="rounded bg-slate-100 px-1">{"{braces}"}</code> are filled in by Claude in this order; any
-                    text outside braces (like <code className="rounded bg-slate-100 px-1">Used OEM</code>) must appear in every new title
+                    text outside braces (like <code className="rounded bg-slate-100 px-1">OEM Used</code>) must appear in every new title
                     or it is rejected. Leave empty for no fixed format.
                   </>
                 }
@@ -261,7 +261,7 @@ export default function SettingsPage() {
                   className="input font-mono"
                   value={s.modules.title.template ?? ""}
                   disabled={!s.modules.title.enabled}
-                  placeholder="{Year range} {Brand} {Model} {Part name and location} {Part number} Used OEM"
+                  placeholder="{Year range} {Brand} {Model} {Part name and location} {Part number} OEM Used"
                   onChange={(e) => up("modules.title.template", e.target.value)}
                 />
               </Field>
@@ -269,9 +269,9 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   className="mt-1 text-xs font-medium text-brand-600 hover:underline"
-                  onClick={() => up("modules.title.template", "{Year range} {Brand} {Model} {Part name and location} {Part number} Used OEM")}
+                  onClick={() => up("modules.title.template", "{Year range} {Brand} {Model} {Part name and location} {Part number} OEM Used")}
                 >
-                  Use the auto-parts format: Year range › Brand › Model › Part name & location › Part number › Used OEM
+                  Use the auto-parts format: Year range › Brand › Model › Part name & location › Part number › OEM Used
                 </button>
               )}
             </div>

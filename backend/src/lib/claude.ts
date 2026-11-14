@@ -45,11 +45,17 @@ Title rules:
 - Put the words buyers actually search for first. No ALL CAPS words except brands/acronyms
   that are normally capitalized, no keyword stuffing, no "L@@K", no emojis, no symbols like
   ! or *, no unrelated brand names, no words like "best" or "cheap".
+- Use plain, everyday words a buyer would type into eBay search: "Headlight" not "Headlamp
+  Illumination Assembly", "Door Mirror" not "Exterior Rear View Mirror Unit", "Left"/"Right"
+  rather than "Driver Side Lateral". No fancy, technical-sounding or marketing words.
+- Year range: NEVER make the year range in the current title smaller (never raise the start year or
+  lower the end year). You may widen it only when the fitment/compatibility evidence clearly
+  supports the extra years; otherwise keep the current years exactly.
 - Never claim anything the listing data does not support (do not invent part numbers,
   sizes, compatibility, or brand). If the current title is already strong, return it unchanged.
 - If the input has "store_title_format", the title MUST follow it exactly: fill each {placeholder}
   in that order with facts from the listing, and copy all text outside the braces word-for-word
-  (e.g. "Used OEM" stays exactly "Used OEM"). If a placeholder's value is unknown, leave it out
+  (e.g. "OEM Used" stays exactly "OEM Used"). If a placeholder's value is unknown, leave it out
   rather than guessing. To stay within 80 characters, shorten the placeholders (abbreviate the
   location like "Front Left" -> "FL" only if needed, drop filler words) - never drop the fixed text.
   This store format overrides the general "search words first" ordering above.
@@ -196,7 +202,7 @@ export interface ClaudeOptions {
   effort: "low" | "medium" | "high";
   inputPricePerMtok: number;
   outputPricePerMtok: number;
-  /** store title format, e.g. "{Year range} {Brand} {Model} {Part name and location} {Part number} Used OEM" */
+  /** store title format, e.g. "{Year range} {Brand} {Model} {Part name and location} {Part number} OEM Used" */
   titleTemplate?: string;
 }
 

@@ -233,7 +233,7 @@ test("a failed category lookup does not sink the listing; retry-errors re-queues
 });
 
 test("store title format reaches Claude and missing fixed text is rejected", async () => {
-  const tpl = "{Year range} {Brand} {Model} {Part name and location} {Part number} Used OEM";
+  const tpl = "{Year range} {Brand} {Model} {Part name and location} {Part number} OEM Used";
   const sid = String(store._id);
   const saved = await call(`/stores/${sid}`, "PATCH", {
     settings: { ...DEFAULT_SETTINGS, mode: "review", modules: { ...DEFAULT_SETTINGS.modules, title: { enabled: true, template: tpl } } },
@@ -253,8 +253,8 @@ test("store title format reaches Claude and missing fixed text is rejected", asy
   const batch = await runBatch(fresh, withFormat, { itemIds: ["2"] });
   assert.equal(seenTemplate, tpl, "format is passed to Claude");
   const p = await Proposal.findOne({ batchId: batch!._id, itemId: "2" }).lean();
-  assert.equal(p!.changes.title, undefined, "title without 'Used OEM' is not applied");
-  assert.ok(p!.notes.some((n: string) => /missing required text "Used OEM"/.test(n)));
+  assert.equal(p!.changes.title, undefined, "title without 'OEM Used' is not applied");
+  assert.ok(p!.notes.some((n: string) => /missing required text "OEM Used"/.test(n)));
 });
 
 test("manual edits are revertable: description, quantity and the full fitment list come back", async () => {

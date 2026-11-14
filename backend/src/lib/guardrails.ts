@@ -11,7 +11,7 @@ export interface CheckResult<T> {
   note: string;
 }
 
-/** Fixed text in a title template = everything outside {…}, e.g. "Used OEM". */
+/** Fixed text in a title template = everything outside {…}, e.g. "OEM Used". */
 export function templateLiterals(template: string | undefined): string[] {
   if (!template?.trim()) return [];
   return template
@@ -20,15 +20,54 @@ export function templateLiterals(template: string | undefined): string[] {
     .filter(Boolean);
 }
 
+const YEAR = "(19[5-9]\\d|20\\d{2})";
+const RANGE_RE = new RegExp(`(?<![\\w-])${YEAR}\\s*[-–]\\s*(${YEAR.slice(1, -1)}|\\d{2})(?![\\w-])`);
+const SINGLE_RE = new RegExp(`(?<![\\w-])${YEAR}(?![\\w-])`);
+
+/** First year range ("2016-2021", "2016-21") or single year in a title. */
+export function titleYears(title: string): { start: number; end: number; text: string; index: number } | null {
+  const r = RANGE_RE.exec(title);
+  if (r) {
+    const start = Number(r[1]);
+    let end = Number(r[2]);
+    if (r[2].length === 2) end = Math.floor(start / 100) * 100 + end + (end < start % 100 ? 100 : 0);
+    if (end >= start) return { start, end, text: r[0], index: r.index };
+  }
+  const s = SINGLE_RE.exec(title);
+  return s ? { start: Number(s[1]), end: Number(s[1]), text: s[0], index: s.index } : null;
+}
+
+/**
+ * The year range in a title may only grow: if the new title narrows or drops the current range,
+ * put back the union of both (start = earliest, end = latest).
+ */
+export function keepYearRange(oldTitle: string, newTitle: string): { title: string; note?: string } {
+  const before = titleYears(oldTitle);
+  if (!before) return { title: newTitle };
+  const after = titleYears(newTitle);
+  const fmt = (a: number, b: number) => (a === b ? String(a) : `${a}-${b}`);
+  if (!after) return { title: `${before.text} ${newTitle}`, note: `kept year range ${before.text}` };
+  if (after.start <= before.start && after.end >= before.end) return { title: newTitle };
+  const range = fmt(Math.min(after.start, before.start), Math.max(after.end, before.end));
+  return {
+    title: newTitle.slice(0, after.index) + range + newTitle.slice(after.index + after.text.length),
+    note: `year range ${after.text} would shrink ${before.text} - kept ${range}`,
+  };
+}
+
 export function checkTitle(oldTitle: string, newTitle: string, template?: string): CheckResult<string> {
-  const t = (newTitle || "").replace(/\s+/g, " ").trim();
-  if (!t || t === oldTitle.trim()) return { value: null, note: "title unchanged" };
+  let t = (newTitle || "").replace(/\s+/g, " ").trim();
+  if (!t) return { value: null, note: "title unchanged" };
+  const years = keepYearRange(oldTitle, t);
+  t = years.title;
+  if (t === oldTitle.trim()) return { value: null, note: "title unchanged" };
+  if (years.note && t.length > 80) return { value: null, note: `title rejected: ${years.note}, then ${t.length} chars > 80` };
   if (t.length > 80) return { value: null, note: `title rejected: ${t.length} chars > 80` };
   if (BANNED_TITLE.test(t)) return { value: null, note: "title rejected: banned words/symbols" };
   const missing = templateLiterals(template).filter((lit) => !t.toLowerCase().includes(lit.toLowerCase()));
   if (missing.length) return { value: null, note: `title rejected: missing required text ${missing.map((m) => `"${m}"`).join(", ")}` };
   if (t.length < Math.min(oldTitle.length, 80) * 0.7) return { value: null, note: "title rejected: much shorter than current" };
-  return { value: t, note: "title: ok" };
+  return { value: t, note: years.note ? `title: ok (${years.note})` : "title: ok" };
 }
 
 export function priceFloor(cost: number, p: StoreSettings["modules"]["pricing"]): number {

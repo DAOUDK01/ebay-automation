@@ -20,7 +20,7 @@ export interface StoreSettings {
     outputPricePerMtok: number;
   };
   modules: {
-    /** template: the store's title format, e.g. "{Year range} {Brand} {Model} {Part name and location} {Part number} Used OEM".
+    /** template: the store's title format, e.g. "{Year range} {Brand} {Model} {Part name and location} {Part number} OEM Used".
      *  {…} parts are filled in by Claude in that order; text outside {…} must appear in every title. "" = no fixed format. */
     title: { enabled: boolean; template: string };
     pricing: {
@@ -147,5 +147,12 @@ export function resolveSettings(saved: Partial<StoreSettings> | undefined): Stor
     for (const k of Object.keys(base)) out[k] = merge(base[k], over[k]);
     return out;
   };
-  return merge(DEFAULT_SETTINGS, saved);
+  const out: StoreSettings = merge(DEFAULT_SETTINGS, saved);
+  // store format changed: titles now end "OEM Used" (was "Used OEM")
+  out.modules.title.template = migrateTitleTemplate(out.modules.title.template);
+  return out;
+}
+
+export function migrateTitleTemplate(t: string): string {
+  return (t || "").replace(/\bUsed OEM\b/gi, "OEM Used");
 }

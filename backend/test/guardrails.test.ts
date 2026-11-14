@@ -8,7 +8,9 @@ import {
   inActiveHours,
   priceFloor,
   templateLiterals,
+  titleYears,
 } from "../src/lib/guardrails";
+import { migrateTitleTemplate } from "../src/models/Store";
 import { buildReviseXml, normalizeItem } from "../src/lib/ebay/trading";
 import { DEFAULT_SETTINGS, resolveSettings } from "../src/models/Store";
 import { XMLParser } from "fast-xml-parser";
@@ -45,6 +47,27 @@ test("title format: fixed text outside {…} is required", () => {
   assert.ok(checkTitle(old, "2016-2018 Honda Civic Headlight Front Left 33150-TBA-A01 used oem", tpl).value);
   // no template -> no requirement
   assert.ok(checkTitle(old, "2016-2018 Honda Civic Headlight Front Left 33150-TBA-A01 OEM Part").value);
+});
+
+test("title year range never shrinks; may grow", () => {
+  const old = "2016-2021 Honda Civic Front Brake Pads 45022-TBA-A01 Used OEM";
+  // narrowed -> union restored
+  const a = checkTitle(old, "2017-2019 Honda Civic Front Brake Pad Set 45022-TBA-A01 OEM Used");
+  assert.equal(a.value, "2016-2021 Honda Civic Front Brake Pad Set 45022-TBA-A01 OEM Used");
+  assert.match(a.note, /kept 2016-2021/);
+  // shifted (later end, later start) -> union
+  assert.equal(checkTitle(old, "2018-2023 Honda Civic Front Brake Pads 45022-TBA-A01 OEM Used").value, "2016-2023 Honda Civic Front Brake Pads 45022-TBA-A01 OEM Used");
+  // widened -> kept as suggested
+  assert.equal(checkTitle(old, "2014-2022 Honda Civic Front Brake Pads 45022-TBA-A01 OEM Used").value, "2014-2022 Honda Civic Front Brake Pads 45022-TBA-A01 OEM Used");
+  // dropped -> old range put back in front
+  assert.equal(checkTitle(old, "Honda Civic Front Brake Pads 45022-TBA-A01 OEM Used").value, "2016-2021 Honda Civic Front Brake Pads 45022-TBA-A01 OEM Used");
+  // two-digit end years and single years
+  assert.deepEqual(titleYears("16-21 nope 2016-21 Civic"), { start: 2016, end: 2021, text: "2016-21", index: 11 });
+  assert.equal(checkTitle("2015 Ford F150 Mirror", "2016 Ford F-150 Right Door Mirror").value, "2015-2016 Ford F-150 Right Door Mirror");
+  // part numbers with 4 digits are not years
+  assert.equal(titleYears("Honda 33150-2016-A01 Headlight"), null);
+  // template migration
+  assert.equal(migrateTitleTemplate("{Year range} {Brand} {Part number} Used OEM"), "{Year range} {Brand} {Part number} OEM Used");
 });
 
 test("price: capped, needs cost to decrease, respects floor", () => {
