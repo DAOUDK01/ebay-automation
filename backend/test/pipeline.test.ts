@@ -24,6 +24,7 @@ const ITEM = (id: string, title: string): EbayItem => ({
   quantitySold: 0, watchCount: 0, hasVariations: false, variationNames: [], itemSpecifics: { Brand: ["Acme"] },
   compatibilityCount: 0, compatibilitySample: [], shipping: { options: [], dispatchDays: "1", policy: "", location: "" },
   pictureCount: 3, imageUrl: "", descriptionText: "Fits 2016-2017 Honda Civic. MPN AC-555", url: "",
+  site: "eBayMotors",
 });
 
 const SUGGESTION: ClaudeSuggestion = {
@@ -38,7 +39,7 @@ const SUGGESTION: ClaudeSuggestion = {
   confidence: "high",
 };
 
-const revised: { itemId: string; changes: ListingChanges }[] = [];
+const revised: { itemId: string; changes: ListingChanges; site?: string }[] = [];
 const deps: PipelineDeps = {
   trading: {
     allActiveListings: async () =>
@@ -50,8 +51,8 @@ const deps: PipelineDeps = {
       if (id === "3") throw new Error("eBay says no");
       return ITEM(id, `Brake Pad Set Front Ceramic ${id}`);
     },
-    reviseItem: async (itemId, changes) => {
-      revised.push({ itemId, changes });
+    reviseItem: async (itemId, changes, site) => {
+      revised.push({ itemId, changes, site });
       return [];
     },
   },
@@ -157,6 +158,7 @@ test("sync + review-mode batch + approve + push + revert", async () => {
   await pushProposals(store, deps, batch!._id, ["approved"]);
   assert.equal(revised.length, 1);
   assert.equal(revised[0].itemId, "1");
+  assert.equal(revised[0].site, "eBayMotors", "revise goes to the listing's own eBay site");
   assert.equal(revised[0].changes.title, "Acme Ceramic Front Brake Pads 2016-2017 Honda Civic AC-555");
   assert.equal((await Batch.findById(batch!._id))!.status, "done");
   assert.equal((await Listing.findOne({ storeId: store._id, itemId: "1" }))!.title, "Acme Ceramic Front Brake Pads 2016-2017 Honda Civic AC-555");
@@ -167,7 +169,12 @@ test("sync + review-mode batch + approve + push + revert", async () => {
   assert.deepEqual(revised[1].changes.itemSpecifics, { Brand: ["Acme"] });
   assert.equal((await Proposal.findById(p1!._id))!.status, "reverted");
 
-  // cooldown: nothing due now
+  // the failed listing is not put on the 21-day cooldown - only a short retry delay
+  const failedListing = await Listing.findOne({ storeId: store._id, itemId: "3" }).lean();
+  assert.equal(failedListing!.lastProcessedAt, null);
+  assert.ok(failedListing!.lastErrorAt instanceof Date);
+
+  // cooldown: nothing due now (1,2 processed; 3 failed less than 24h ago)
   assert.equal(await runBatch(store, deps, { limit: 10 }), null);
 
   // history + overview endpoints
@@ -175,7 +182,7 @@ test("sync + review-mode batch + approve + push + revert", async () => {
   assert.equal(r.json.total, 1);
   r = await call(`/stores/${sid}`);
   assert.equal(r.json.store.stats.activeListings, 3);
-  assert.equal(r.json.store.stats.processedListings, 3);
+  assert.equal(r.json.store.stats.processedListings, 2, "the failed listing doesn't count as optimized");
 });
 
 test("auto mode pushes at the end of the batch; settings validation", async () => {
@@ -189,6 +196,34 @@ test("auto mode pushes at the end of the batch; settings validation", async () =
   const batch = await runBatch(fresh, deps, { itemIds: ["1"] });
   assert.equal(batch!.status, "done");
   assert.equal(revised.length, before + 1);
+});
+
+test("a failed category lookup does not sink the listing; retry-errors re-queues failures", async () => {
+  const noAspects: PipelineDeps = {
+    ...deps,
+    rest: {
+      ...deps.rest,
+      aspectsForCategory: async () => {
+        throw new Error("GET .../get_item_aspects_for_category -> 400: 62005 does not belong to specified category tree");
+      },
+    },
+  };
+  const fresh = (await Store.findById(store._id)) as StoreDocument;
+  const batch = await runBatch(fresh, noAspects, { itemIds: ["2"] });
+  const p = await Proposal.findOne({ batchId: batch!._id, itemId: "2" }).lean();
+  assert.notEqual(p!.status, "error");
+  assert.ok(p!.notes.some((n: string) => n.startsWith("item specifics skipped")));
+  assert.equal(p!.changes.itemSpecifics, undefined);
+  assert.ok(p!.changes.title, "title still optimized");
+
+  // retry endpoint: batch #1 had one failed listing ("3")
+  const first = await Batch.findOne({ storeId: store._id, number: 1 });
+  const r = await call(`/stores/${String(store._id)}/batches/${first!._id}/retry-errors`, "POST");
+  assert.equal(r.status, 202, JSON.stringify(r.json));
+  assert.equal(r.json.count, 1);
+  assert.deepEqual(r.json.job.payload.itemIds, ["3"]);
+  const again = await call(`/stores/${String(store._id)}/batches/${first!._id}/retry-errors`, "POST");
+  assert.equal(again.status, 409, "second retry while one is queued is refused");
 });
 
 test("costs CSV import + store isolation", async () => {

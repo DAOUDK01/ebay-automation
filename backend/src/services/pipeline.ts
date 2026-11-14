@@ -34,6 +34,9 @@ export function defaultDeps(store: StoreDocument): PipelineDeps {
 
 export class BudgetExceeded extends Error {}
 
+/** A listing that failed is picked again automatically after this many hours. */
+export const ERROR_RETRY_HOURS = 24;
+
 // ---------------------------------------------------------------- sync
 export async function syncListings(store: StoreDocument, deps: PipelineDeps): Promise<number> {
   const items = await deps.trading.allActiveListings();
@@ -105,7 +108,15 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
     await Proposal.create({ ...base, status: "skipped", notes: ["auction listing - skipped"] });
     return "skipped";
   }
-  const aspects = await deps.rest.aspectsForCategory(item.categoryId);
+  // Item specifics are a nice-to-have: if eBay's category lookup fails, still optimize title/price.
+  let aspects: Awaited<ReturnType<PipelineDeps["rest"]["aspectsForCategory"]>> = [];
+  let aspectNote = "";
+  try {
+    aspects = await deps.rest.aspectsForCategory(item.categoryId);
+  } catch (e: any) {
+    aspectNote = `item specifics skipped: category ${item.categoryId} lookup failed (${String(e?.message ?? e).slice(0, 160)})`;
+    logger.warn(`[${store.name}] ${itemId}: ${aspectNote}`);
+  }
   const { query, competitors } = await deps.rest.competitorsFor(item, s.excludeSeller, s.competitorCount);
   let result;
   try {
@@ -124,7 +135,7 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
     status,
     suggestion: { ...result.suggestion, suggested_compatibility_rows: suggestedCompat },
     changes,
-    notes: [`competitor query: "${query}" (${competitors.length} found)`, ...notes],
+    notes: [`competitor query: "${query}" (${competitors.length} found)`, ...(aspectNote ? [aspectNote] : []), ...notes],
     competitorQuery: query,
     competitors,
     costUsd: result.costUsd,
@@ -156,11 +167,16 @@ export async function recountBatch(batchId: Types.ObjectId) {
 
 export async function pickNextItems(store: StoreDocument, size: number, cooldownDays: number): Promise<string[]> {
   const cutoff = new Date(Date.now() - cooldownDays * 86400_000);
+  const errorCutoff = new Date(Date.now() - ERROR_RETRY_HOURS * 3600_000);
   const rows = await Listing.find({
     storeId: store._id,
     active: true,
     listingType: { $ne: "Chinese" },
-    $or: [{ lastProcessedAt: null }, { lastProcessedAt: { $lt: cutoff } }],
+    $and: [
+      { $or: [{ lastProcessedAt: null }, { lastProcessedAt: { $lt: cutoff } }] },
+      // a listing that just failed is retried automatically later, not in every batch
+      { $or: [{ lastErrorAt: null }, { lastErrorAt: { $exists: false } }, { lastErrorAt: { $lt: errorCutoff } }] },
+    ],
   })
     .sort({ lastProcessedAt: 1, quantitySold: 1, watchCount: 1 })
     .limit(size)
@@ -194,6 +210,10 @@ export async function runBatch(
     }
     try {
       await processItem(store, s, deps, batch._id, ids[i]);
+      await Listing.updateOne(
+        { storeId: store._id, itemId: ids[i] },
+        { $set: { lastProcessedAt: new Date() }, $unset: { lastErrorAt: 1 } },
+      );
     } catch (e: any) {
       if (e instanceof BudgetExceeded) {
         stopReason = e.message;
@@ -201,8 +221,9 @@ export async function runBatch(
       }
       logger.error(`[${store.name}] ${ids[i]} failed`, e);
       await Proposal.create({ storeId: store._id, batchId: batch._id, itemId: ids[i], status: "error", error: String(e?.message ?? e) });
+      // not marked as processed -> no 21-day cooldown; retried after ERROR_RETRY_HOURS
+      await Listing.updateOne({ storeId: store._id, itemId: ids[i] }, { $set: { lastErrorAt: new Date() } });
     }
-    await Listing.updateOne({ storeId: store._id, itemId: ids[i] }, { $set: { lastProcessedAt: new Date() } });
     await recountBatch(batch._id);
     if (i < ids.length - 1) await deps.sleep(s.gapBetweenListingsSec * 1000);
   }
@@ -236,7 +257,7 @@ export async function pushProposals(
       continue;
     }
     try {
-      const warnings = await deps.trading.reviseItem(p.itemId, changes);
+      const warnings = await deps.trading.reviseItem(p.itemId, changes, (p.before as EbayItem | undefined)?.site);
       p.status = "pushed";
       p.pushedAt = new Date();
       p.warnings = warnings;
@@ -272,7 +293,7 @@ export async function revertProposal(store: StoreDocument, deps: PipelineDeps, p
   if (changes.price) revert.price = before.price;
   if (changes.itemSpecifics) revert.itemSpecifics = before.itemSpecifics;
   if (!Object.keys(revert).length) throw new Error("Nothing to revert (compatibility-only change)");
-  await deps.trading.reviseItem(p.itemId, revert);
+  await deps.trading.reviseItem(p.itemId, revert, before?.site);
   p.status = "reverted";
   p.revertedAt = new Date();
   await p.save();

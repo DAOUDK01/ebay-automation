@@ -55,6 +55,19 @@ batchesRouter.post("/:batchId/push", async (req, res) => {
   res.status(202).json({ job, approved });
 });
 
+/** Re-run the listings of this batch that failed, as a new batch. */
+batchesRouter.post("/:batchId/retry-errors", async (req, res) => {
+  const store = await loadStore(req);
+  const batchId = String(req.params.batchId);
+  if (!isId(batchId)) throw new HttpError(404, "Batch not found");
+  const failed = await Proposal.find({ batchId, storeId: store._id, status: "error" }).select("itemId").lean();
+  const itemIds = [...new Set(failed.map((p) => p.itemId))];
+  if (!itemIds.length) throw new HttpError(400, "This batch has no failed listings");
+  const { job, duplicate } = await enqueue(store._id, "batch", { itemIds, trigger: "manual" });
+  if (duplicate) throw new HttpError(409, "Another batch is already queued or running - try again when it finishes");
+  res.status(202).json({ job, count: itemIds.length });
+});
+
 // ------------------------------------------------------------- proposals
 const editSchema = z.object({
   status: z.enum(["approved", "rejected", "proposed"]).optional(),

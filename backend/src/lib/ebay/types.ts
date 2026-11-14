@@ -42,6 +42,8 @@ export interface EbayItem {
   imageUrl: string;
   descriptionText: string;
   url: string;
+  /** Trading API site code the listing lives on, e.g. "US" or "eBayMotors" */
+  site?: string;
 }
 
 export interface Aspect {

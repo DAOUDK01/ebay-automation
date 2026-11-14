@@ -30,22 +30,38 @@ export class RestClient {
     throw new Error(`GET ${path} failed after retries`);
   }
 
-  async categoryTreeId(): Promise<string> {
-    const cached = treeIdCache.get(this.marketplaceId);
+  async categoryTreeId(marketplaceId = this.marketplaceId): Promise<string> {
+    const cached = treeIdCache.get(marketplaceId);
     if (cached) return cached;
-    const j = await this.get("/commerce/taxonomy/v1/get_default_category_tree_id", { marketplace_id: this.marketplaceId });
-    treeIdCache.set(this.marketplaceId, j.categoryTreeId);
+    const j = await this.get("/commerce/taxonomy/v1/get_default_category_tree_id", { marketplace_id: marketplaceId });
+    treeIdCache.set(marketplaceId, j.categoryTreeId);
     return j.categoryTreeId;
+  }
+
+  /** eBay Motors parts categories live in a separate category tree (EBAY_MOTORS_US, id 100),
+   *  so for US stores we fall back to it when the main tree says the category isn't there (error 62005). */
+  private treeMarketplaces(): string[] {
+    return this.marketplaceId === "EBAY_US" ? ["EBAY_US", "EBAY_MOTORS_US"] : [this.marketplaceId];
   }
 
   async aspectsForCategory(categoryId: string): Promise<Aspect[]> {
     const key = `${this.marketplaceId}:${categoryId}`;
     const c = aspectCache.get(key);
     if (c && Date.now() - c.at < ASPECT_TTL) return c.aspects;
-    const tree = await this.categoryTreeId();
-    const j = await this.get(`/commerce/taxonomy/v1/category_tree/${tree}/get_item_aspects_for_category`, {
-      category_id: categoryId,
-    });
+    let j: any = null;
+    const candidates = this.treeMarketplaces();
+    for (let i = 0; i < candidates.length; i++) {
+      const tree = await this.categoryTreeId(candidates[i]);
+      try {
+        j = await this.get(`/commerce/taxonomy/v1/category_tree/${tree}/get_item_aspects_for_category`, {
+          category_id: categoryId,
+        });
+        break;
+      } catch (e: any) {
+        const wrongTree = /62005|does not belong to specified category tree/.test(String(e?.message));
+        if (!wrongTree || i === candidates.length - 1) throw e;
+      }
+    }
     const aspects: Aspect[] = (j.aspects ?? []).map((a: any) => {
       const con = a.aspectConstraint ?? {};
       return {
@@ -108,6 +124,16 @@ export class RestClient {
         res = [];
       }
       if (res.length >= 3) break;
+    }
+    // Some categories (e.g. eBay Motors parts) can't be filtered by category id on this marketplace -
+    // last attempt: same query without the category filter.
+    if (res.length < 3 && used) {
+      try {
+        const loose = await this.search(used, { conditionId: item.conditionId, excludeSeller, limit });
+        if (loose.length > res.length) res = loose;
+      } catch (e) {
+        logger.warn(`competitor search (no category) failed for "${used}"`, e);
+      }
     }
     return { query: used, competitors: res };
   }

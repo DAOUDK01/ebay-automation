@@ -20,6 +20,14 @@ const parser = new XMLParser({
 
 export class EbayApiError extends Error {}
 
+/** Trading API <Site> code -> numeric site id (header X-EBAY-API-SITEID). eBay Motors items live on site 100. */
+const SITE_IDS: Record<string, number> = {
+  US: 0, eBayMotors: 100, Canada: 2, UK: 3, Australia: 15, Austria: 16, France: 71, Germany: 77,
+  Italy: 101, Spain: 186, Ireland: 205, CanadaFrench: 210, HongKong: 201, Singapore: 216,
+};
+export const siteIdFor = (site: string | undefined, fallback = 0) =>
+  site && site in SITE_IDS ? SITE_IDS[site] : fallback;
+
 export const xmlEscape = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 
@@ -92,6 +100,7 @@ export function normalizeItem(itemId: string, it: any): EbayItem {
     imageUrl: txt(pics[0]),
     descriptionText: htmlToText(txt(it.Description)),
     url: txt(it.ListingDetails?.ViewItemURL),
+    site: txt(it.Site),
   };
 }
 
@@ -127,7 +136,7 @@ export function buildReviseXml(itemId: string, changes: ListingChanges): string 
 export class TradingClient {
   constructor(private getToken: () => Promise<string>, private siteId = 0) {}
 
-  async call(name: string, innerXml: string, retries = 3): Promise<any> {
+  async call(name: string, innerXml: string, retries = 3, siteId = this.siteId): Promise<any> {
     const body =
       `<?xml version="1.0" encoding="utf-8"?><${name}Request xmlns="urn:ebay:apis:eBLBaseComponents">` +
       `<ErrorLanguage>en_US</ErrorLanguage><WarningLevel>High</WarningLevel>${innerXml}</${name}Request>`;
@@ -139,7 +148,7 @@ export class TradingClient {
           headers: {
             "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
             "X-EBAY-API-CALL-NAME": name,
-            "X-EBAY-API-SITEID": String(this.siteId),
+            "X-EBAY-API-SITEID": String(siteId),
             "X-EBAY-API-IAF-TOKEN": await this.getToken(),
             "Content-Type": "text/xml",
           },
@@ -220,9 +229,10 @@ export class TradingClient {
     return normalizeItem(itemId, it);
   }
 
-  /** Returns warning messages (if any). Throws on failure. */
-  async reviseItem(itemId: string, changes: ListingChanges): Promise<string[]> {
-    const root = await this.call("ReviseFixedPriceItem", buildReviseXml(itemId, changes));
+  /** Returns warning messages (if any). Throws on failure.
+   *  `site` = the listing's <Site> from GetItem (e.g. "eBayMotors"), so the revise goes to the right eBay site. */
+  async reviseItem(itemId: string, changes: ListingChanges, site?: string): Promise<string[]> {
+    const root = await this.call("ReviseFixedPriceItem", buildReviseXml(itemId, changes), 3, siteIdFor(site, this.siteId));
     return (root.Errors ?? []).map((e: any) => txt(e.LongMessage)).filter(Boolean);
   }
 }

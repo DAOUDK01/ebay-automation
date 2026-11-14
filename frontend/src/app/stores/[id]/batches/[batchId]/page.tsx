@@ -54,6 +54,20 @@ export default function BatchReviewPage() {
     }
   }
 
+  const failed = proposals.filter((p) => p.status === "error").length;
+
+  async function retryFailed() {
+    setBusy("retry");
+    try {
+      const r = await api<{ count: number }>(`/stores/${id}/batches/${batchId}/retry-errors`, { method: "POST" });
+      toast.success(`Retrying ${r.count} listing(s) in a new batch - see Review & batches`);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function push() {
     if (!confirm(`Push ${approved} approved change(s) to eBay now?`)) return;
     setBusy("push");
@@ -81,6 +95,11 @@ export default function BatchReviewPage() {
         }
         actions={
           <>
+            {failed > 0 && (
+              <Button variant="secondary" size="sm" loading={busy === "retry"} onClick={retryFailed}>
+                Retry {failed} failed
+              </Button>
+            )}
             <Button variant="secondary" size="sm" disabled={!proposed} loading={busy === "approve"} onClick={approveAll}>
               Approve all ({proposed})
             </Button>

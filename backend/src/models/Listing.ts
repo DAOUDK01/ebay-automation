@@ -14,6 +14,8 @@ const listingSchema = new Schema(
     active: { type: Boolean, default: true },
     lastSyncedAt: Date,
     lastProcessedAt: { type: Date, default: null },
+    /** last time optimizing this listing failed (retried after ERROR_RETRY_HOURS) */
+    lastErrorAt: { type: Date, default: null },
     /** your landed cost (incl. your shipping cost); enables safe price decreases */
     cost: { type: Number, default: null },
   },
