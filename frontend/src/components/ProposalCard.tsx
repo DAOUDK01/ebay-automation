@@ -6,6 +6,12 @@ import { FitmentPanel } from "./FitmentPanel";
 import { toast } from "./toast";
 import { Badge, Button, StatusBadge, cx } from "./ui";
 
+const SPEC_SOURCE: Record<string, { label: string; short: string; color: "blue" | "green" | "indigo"; hint: string }> = {
+  listing_text: { label: "From listing", short: "listing", color: "blue", hint: "Stated in this listing" },
+  other_listings: { label: "Other listings", short: "other listings", color: "green", hint: "Used by other eBay listings of the same part number" },
+  part_number_knowledge: { label: "Part # knowledge", short: "part # knowledge", color: "indigo", hint: "Claude's knowledge of this OEM part number" },
+};
+
 /** One listing inside a batch: before/after, editable title & price, approve / reject / revert. */
 export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Proposal; onChange: () => void }) {
   const editable = ["proposed", "approved", "rejected"].includes(p.status);
@@ -24,6 +30,14 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
   const newSpecs = Object.entries(p.changes.itemSpecifics ?? {}).filter(
     ([k, v]) => JSON.stringify(b.itemSpecifics?.[k]) !== JSON.stringify(v),
   );
+  // where each suggested specific came from (Claude tags every value)
+  const specSource = (name: string) =>
+    p.suggestion?.item_specifics?.find((s) => s.name.toLowerCase() === name.toLowerCase())?.source;
+  const specCounts: Record<string, number> = {};
+  for (const [k] of newSpecs) {
+    const src = specSource(k) ?? "listing_text";
+    specCounts[src] = (specCounts[src] ?? 0) + 1;
+  }
   // rows with their source; older proposals stored rows without _source
   const compat = (p.suggestion?.suggested_compatibility_rows ?? p.changes.compatibilityAdd ?? []).map((r) => {
     const row = r as Record<string, string>;
@@ -83,6 +97,7 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={p.status} />
+            {p.kind === "manual" && <Badge color="indigo">manual edit</Badge>}
             {p.suggestion?.confidence && <Badge color="blue">{p.suggestion.confidence} confidence</Badge>}
             <a href={b.url || `https://www.ebay.com/itm/${p.itemId}`} target="_blank" rel="noreferrer" className="text-xs text-slate-500 hover:underline">
               {p.itemId} ↗
@@ -166,11 +181,30 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
         <div className="grid gap-4 border-t border-slate-100 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
           {newSpecs.length > 0 && (
             <div>
-              <div className="label">Item specifics to add</div>
-              <ul className="space-y-0.5 text-sm">
+              <div className="label flex flex-wrap items-center gap-2">
+                <span>Item specifics to add · {newSpecs.length}</span>
+                {Object.entries(specCounts).map(([src, n]) => (
+                  <Badge key={src} color={SPEC_SOURCE[src]?.color ?? "gray"}>
+                    {SPEC_SOURCE[src]?.label ?? src} · {n}
+                  </Badge>
+                ))}
+              </div>
+              <ul className="space-y-1 text-sm">
                 {newSpecs.map(([k, v]) => (
-                  <li key={k}>
-                    <span className="font-medium">{k}:</span> {v.join(", ")}
+                  <li key={k} className="flex flex-wrap items-baseline gap-x-1.5">
+                    <span className="font-medium">{k}:</span>
+                    <span className="min-w-0 break-words">{v.join(", ")}</span>
+                    {specSource(k) && specSource(k) !== "listing_text" && (
+                      <span
+                        className={cx(
+                          "rounded px-1 text-[10px] font-semibold uppercase tracking-wide",
+                          specSource(k) === "other_listings" ? "bg-emerald-50 text-emerald-700" : "bg-brand-50 text-brand-700",
+                        )}
+                        title={SPEC_SOURCE[specSource(k)!]?.hint}
+                      >
+                        {SPEC_SOURCE[specSource(k)!]?.short}
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>

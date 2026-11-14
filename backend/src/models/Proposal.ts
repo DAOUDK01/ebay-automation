@@ -17,7 +17,9 @@ export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 const proposalSchema = new Schema(
   {
     storeId: { type: Schema.Types.ObjectId, ref: "Store", required: true },
-    batchId: { type: Schema.Types.ObjectId, ref: "Batch", required: true, index: true },
+    /** null for manual edits made on the listing page */
+    batchId: { type: Schema.Types.ObjectId, ref: "Batch", default: null, index: true },
+    kind: { type: String, enum: ["optimizer", "manual"], default: "optimizer" },
     itemId: { type: String, required: true },
     status: { type: String, enum: PROPOSAL_STATUSES, required: true },
     before: { type: Schema.Types.Mixed, default: {} },

@@ -31,7 +31,16 @@ export interface StoreSettings {
       feePct: number;
       minPrice: number;
     };
-    specifics: { enabled: boolean; overwriteExisting: boolean };
+    /** useOtherListings = learn specifics from other listings of the same part number; allowKnowledge = let Claude
+     *  fill part-level facts (interchange numbers, features…) from its knowledge (high confidence only);
+     *  allowCustomNames = allow useful specifics that aren't in eBay's list for the category (e.g. Interchange Part Number) */
+    specifics: {
+      enabled: boolean;
+      overwriteExisting: boolean;
+      useOtherListings: boolean;
+      allowKnowledge: boolean;
+      allowCustomNames: boolean;
+    };
     /** apply = push fitment to eBay (else report only); researchEbay = learn fitment from other listings of the
      *  same part number; allowKnowledge = let Claude add vehicles from its knowledge of the part number (verified
      *  against eBay's catalog); minListings = how many reference listings must agree on a vehicle */
@@ -74,7 +83,7 @@ export const DEFAULT_SETTINGS: StoreSettings = {
       feePct: 13.5,
       minPrice: 0,
     },
-    specifics: { enabled: true, overwriteExisting: false },
+    specifics: { enabled: true, overwriteExisting: false, useOtherListings: true, allowKnowledge: true, allowCustomNames: true },
     compatibility: { enabled: true, apply: false, researchEbay: true, allowKnowledge: true, minListings: 2, maxReferenceListings: 5 },
   },
 };

@@ -63,20 +63,60 @@ test("specifics: only valid aspects, allowed values, no overwrite by default", (
   const r = checkSpecifics(
     item,
     [
-      { name: "Manufacturer Part Number", values: ["AC-555"], source: "" },
-      { name: "friction material", values: ["ceramic"], source: "" },
-      { name: "Placement on Vehicle", values: ["Front", "Middle"], source: "" },
-      { name: "Made Up", values: ["x"], source: "" },
-      { name: "Brand", values: ["Other"], source: "" },
+      { name: "Manufacturer Part Number", values: ["AC-555"], source: "listing_text" as const, confidence: "high" as const },
+      { name: "friction material", values: ["ceramic"], source: "listing_text" as const, confidence: "high" as const },
+      { name: "Placement on Vehicle", values: ["Front", "Middle"], source: "listing_text" as const, confidence: "high" as const },
+      { name: "Made Up", values: ["x"], source: "listing_text" as const, confidence: "high" as const },
+      { name: "Brand", values: ["Other"], source: "listing_text" as const, confidence: "high" as const },
     ],
     ASPECTS,
     DEFAULT_SETTINGS.modules.specifics,
   );
   assert.deepEqual(r.value, { Brand: ["Acme"], "Manufacturer Part Number": ["AC-555"], "Friction Material": ["Ceramic"] });
-  const multi = checkSpecifics(item, [{ name: "Placement on Vehicle", values: ["Front", "Rear"], source: "" }], ASPECTS, DEFAULT_SETTINGS.modules.specifics);
+  const multi = checkSpecifics(item, [{ name: "Placement on Vehicle", values: ["Front", "Rear"], source: "listing_text" as const, confidence: "high" as const }], ASPECTS, DEFAULT_SETTINGS.modules.specifics);
   assert.deepEqual(multi.value?.["Placement on Vehicle"], ["Front", "Rear"]);
-  const ow = checkSpecifics(item, [{ name: "Brand", values: ["Bosch"], source: "" }], ASPECTS, { enabled: true, overwriteExisting: true });
+  const ow = checkSpecifics(item, [{ name: "Brand", values: ["Bosch"], source: "listing_text" as const, confidence: "high" as const }], ASPECTS, { ...DEFAULT_SETTINGS.modules.specifics, overwriteExisting: true });
   assert.deepEqual(ow.value?.Brand, ["Bosch"]);
+});
+
+test("specifics: other listings, part-number knowledge, custom part-number names, per-copy protection", () => {
+  const item = { itemSpecifics: { Brand: ["Audi"] }, variationNames: [] };
+  const S = DEFAULT_SETTINGS.modules.specifics;
+  const sug = [
+    { name: "Interchange Part Number", values: ["8J0857501", "8J0857501A"], source: "part_number_knowledge" as const, confidence: "high" as const },
+    { name: "Superseded Part Number", values: ["8J0857501B"], source: "part_number_knowledge" as const, confidence: "medium" as const },
+    { name: "Mirror Features", values: ["Heated", "Power Folding"], source: "other_listings" as const, confidence: "high" as const },
+    { name: "Color", values: ["Black"], source: "other_listings" as const, confidence: "high" as const },
+    { name: "Random Thing", values: ["x"], source: "other_listings" as const, confidence: "high" as const },
+    { name: "Friction Material", values: ["Ceramic"], source: "listing_text" as const, confidence: "high" as const },
+  ];
+  const r = checkSpecifics(item, sug, ASPECTS, S, ["Mirror Features"]);
+  assert.deepEqual(r.value?.["Interchange Part Number"], ["8J0857501", "8J0857501A"], "custom part-number specific allowed");
+  assert.equal(r.value?.["Superseded Part Number"], undefined, "medium-confidence knowledge skipped");
+  assert.deepEqual(r.value?.["Mirror Features"], ["Heated", "Power Folding"], "name used by other same-part listings allowed");
+  assert.equal(r.value?.Color, undefined, "color never taken from other listings");
+  assert.equal(r.value?.["Random Thing"], undefined, "unknown custom name rejected");
+  assert.deepEqual(r.value?.["Friction Material"], ["Ceramic"]);
+  assert.ok(r.notes.some((n) => /add 'Interchange Part Number'.*part-number knowledge/.test(n)));
+
+  // switches off
+  const strict = checkSpecifics(item, sug, ASPECTS, { ...S, allowKnowledge: false, useOtherListings: false, allowCustomNames: false }, ["Mirror Features"]);
+  assert.deepEqual(Object.keys(strict.value ?? {}).sort(), ["Brand", "Friction Material"]);
+
+  // 45 cap: category aspects win over custom names
+  const full = { itemSpecifics: Object.fromEntries(Array.from({ length: 44 }, (_, i) => [`Spec ${i}`, ["x"]])), variationNames: [] };
+  const capped = checkSpecifics(
+    full,
+    [
+      { name: "Interchange Part Number", values: ["1"], source: "listing_text", confidence: "high" },
+      { name: "Friction Material", values: ["Ceramic"], source: "listing_text", confidence: "high" },
+    ],
+    ASPECTS,
+    S,
+  );
+  assert.deepEqual(capped.value?.["Friction Material"], ["Ceramic"]);
+  assert.equal(capped.value?.["Interchange Part Number"], undefined);
+  assert.equal(Object.keys(capped.value!).length, 45);
 });
 
 test("compatibility: report-only by default; push strips internal fields", () => {

@@ -63,20 +63,34 @@ export interface FitmentEvidence {
   rows: { row: CompatRow; support: number }[];
   /** compact Year/Make/Model summary sent to Claude */
   summary: { year: string; make: string; model: string; listings: number; trims: number }[];
+  /** item specifics seen on the same-part listings: value -> how many listings use it */
+  specifics: SpecificsEvidence[];
 }
 
-export const EMPTY_EVIDENCE: FitmentEvidence = { partNumbers: [], references: [], rows: [], summary: [] };
+export interface SpecificsEvidence {
+  name: string;
+  /** how many reference listings have this specific at all */
+  listings: number;
+  values: { value: string; listings: number }[];
+}
+
+export const EMPTY_EVIDENCE: FitmentEvidence = { partNumbers: [], references: [], rows: [], summary: [], specifics: [] };
+
+/** Specifics that describe the individual copy being sold, not the part - never taken from other listings. */
+export const PER_COPY_SPECIFICS = /^(condition|seller notes|color|colour|warranty|manufacturer warranty|items included|custom bundle|modified item|modification description|non-domestic product|california prop 65 warning|unit quantity|unit type)$/i;
 
 export interface FitmentDeps {
   searchByPartNumber?: (pn: string, opts: { excludeSeller?: string; limit?: number }) => Promise<{ itemId: string; title: string; url: string }[]>;
-  getItemCompatibility?: (itemId: string) => Promise<{ itemId: string; title: string; rows: CompatRow[] }>;
+  getItemCompatibility?: (
+    itemId: string,
+  ) => Promise<{ itemId: string; title: string; rows: CompatRow[]; specifics?: Record<string, string[]> }>;
   validateVehicle?: (
     categoryId: string,
     v: { Year: string; Make: string; Model: string },
   ) => Promise<{ Year: string; Make: string; Model: string } | null | undefined>;
 }
 
-/** Look up other eBay listings of the same part number and read their compatibility tables. */
+/** Look up other eBay listings of the same part number and read their compatibility tables + item specifics. */
 export async function gatherFitmentEvidence(
   item: EbayItem,
   deps: FitmentDeps,
@@ -84,12 +98,16 @@ export async function gatherFitmentEvidence(
   log: (msg: string) => void = () => {},
 ): Promise<FitmentEvidence> {
   const c = s.modules.compatibility;
+  const sp = s.modules.specifics;
+  const wantFitment = c.enabled && c.researchEbay;
+  const wantSpecifics = sp.enabled && sp.useOtherListings;
   const partNumbers = extractPartNumbers(item);
-  if (!c.enabled || !c.researchEbay || !partNumbers.length || !deps.searchByPartNumber || !deps.getItemCompatibility) {
+  if ((!wantFitment && !wantSpecifics) || !partNumbers.length || !deps.searchByPartNumber || !deps.getItemCompatibility) {
     return { ...EMPTY_EVIDENCE, partNumbers };
   }
   const references: FitmentReference[] = [];
   const rowMap = new Map<string, { row: CompatRow; refs: Set<string> }>();
+  const specMap = new Map<string, { name: string; refs: Set<string>; values: Map<string, { value: string; refs: Set<string> }> }>();
   const seen = new Set<string>([item.itemId]);
   for (const pn of partNumbers) {
     if (references.length >= c.maxReferenceListings) break;
@@ -104,14 +122,31 @@ export async function gatherFitmentEvidence(
       if (seen.has(h.itemId)) continue;
       seen.add(h.itemId);
       try {
-        const { rows } = await deps.getItemCompatibility(h.itemId);
-        const clean = rows.map(pick).filter((r) => r.Year && r.Make && r.Model);
-        if (!clean.length) continue; // listing without a fitment table - not useful
+        const ref = await deps.getItemCompatibility(h.itemId);
+        const clean = wantFitment ? ref.rows.map(pick).filter((r) => r.Year && r.Make && r.Model) : [];
+        const specs = wantSpecifics
+          ? Object.entries(ref.specifics ?? {}).filter(([n, v]) => n && v.length && !PER_COPY_SPECIFICS.test(n.trim()))
+          : [];
+        if (!clean.length && !specs.length) continue; // nothing useful on this listing
         references.push({ itemId: h.itemId, title: h.title, url: h.url, partNumber: pn, rowCount: clean.length });
         for (const r of clean) {
           const k = fullKey(r);
           if (!rowMap.has(k)) rowMap.set(k, { row: r, refs: new Set() });
           rowMap.get(k)!.refs.add(h.itemId);
+        }
+        for (const [rawName, vals] of specs) {
+          const name = rawName.trim();
+          const nk = name.toLowerCase();
+          if (!specMap.has(nk)) specMap.set(nk, { name, refs: new Set(), values: new Map() });
+          const e = specMap.get(nk)!;
+          e.refs.add(h.itemId);
+          for (const v of vals) {
+            const value = v.trim();
+            if (!value || value.length > 65) continue;
+            const vk = value.toLowerCase();
+            if (!e.values.has(vk)) e.values.set(vk, { value, refs: new Set() });
+            e.values.get(vk)!.refs.add(h.itemId);
+          }
         }
       } catch (e: any) {
         log(`could not read fitment of ${h.itemId}: ${e?.message ?? e}`);
@@ -131,7 +166,18 @@ export async function gatherFitmentEvidence(
     .map((g) => ({ year: g.year, make: g.make, model: g.model, listings: g.refs.size, trims: g.trims.size }))
     .sort((a, b) => b.listings - a.listings || a.make.localeCompare(b.make) || a.model.localeCompare(b.model) || a.year.localeCompare(b.year))
     .slice(0, 300);
-  return { partNumbers, references, rows, summary };
+  const specifics: SpecificsEvidence[] = [...specMap.values()]
+    .map((e) => ({
+      name: e.name,
+      listings: e.refs.size,
+      values: [...e.values.values()]
+        .map((v) => ({ value: v.value, listings: v.refs.size }))
+        .sort((a, b) => b.listings - a.listings)
+        .slice(0, 12),
+    }))
+    .sort((a, b) => b.listings - a.listings || a.name.localeCompare(b.name))
+    .slice(0, 60);
+  return { partNumbers, references, rows, summary, specifics };
 }
 
 /**

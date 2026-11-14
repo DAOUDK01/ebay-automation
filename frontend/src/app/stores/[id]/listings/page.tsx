@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";
@@ -149,21 +150,18 @@ export default function ListingsPage() {
                     <tr key={l._id} className="hover:bg-slate-50">
                       <td className="table-td">
                         <div className="flex items-center gap-3">
-                          {l.imageUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={l.imageUrl} alt="" className="h-10 w-10 rounded border border-slate-200 object-cover" />
-                          ) : (
-                            <div className="h-10 w-10 rounded bg-slate-100" />
-                          )}
+                          <Link href={`/stores/${id}/listings/${l.itemId}`} className="shrink-0">
+                            {l.imageUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={l.imageUrl} alt="" className="h-10 w-10 rounded border border-slate-200 object-cover" />
+                            ) : (
+                              <div className="h-10 w-10 rounded bg-slate-100" />
+                            )}
+                          </Link>
                           <div className="min-w-0">
-                            <a
-                              href={`https://www.ebay.com/itm/${l.itemId}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="line-clamp-2 font-medium hover:text-brand-700"
-                            >
+                            <Link href={`/stores/${id}/listings/${l.itemId}`} className="line-clamp-2 font-medium hover:text-brand-700 hover:underline">
                               {l.title}
-                            </a>
+                            </Link>
                             <div className="text-xs text-slate-400">
                               {l.itemId}
                               {l.sku && ` · ${l.sku}`}
@@ -178,7 +176,13 @@ export default function ListingsPage() {
                         <CostCell storeId={id} l={l} onSaved={() => mutate()} />
                       </td>
                       <td className="table-td text-slate-500">{timeAgo(l.lastProcessedAt)}</td>
-                      <td className="table-td text-right">
+                      <td className="table-td whitespace-nowrap text-right">
+                        <Link
+                          href={`/stores/${id}/listings/${l.itemId}?tab=edit`}
+                          className="mr-1 inline-flex rounded-md px-2.5 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50"
+                        >
+                          Edit
+                        </Link>
                         <Button size="sm" variant="ghost" onClick={() => optimize(l.itemId)}>
                           Optimize now
                         </Button>

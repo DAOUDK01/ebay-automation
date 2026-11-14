@@ -99,7 +99,7 @@ proposalsRouter.patch("/:proposalId", async (req, res) => {
   p.markModified("changes");
   if (body.status) p.status = body.status;
   await p.save();
-  await recountBatch(p.batchId as any);
+  if (p.batchId) await recountBatch(p.batchId as any);
   res.json({ proposal: p });
 });
 
@@ -109,7 +109,7 @@ proposalsRouter.post("/:proposalId/revert", async (req, res) => {
   if (!isId(pid)) throw new HttpError(404, "Change not found");
   try {
     const p = await revertProposal(store, defaultDeps(store), pid);
-    await recountBatch(p.batchId as any);
+    if (p.batchId) await recountBatch(p.batchId as any);
     res.json({ proposal: p });
   } catch (e: any) {
     throw new HttpError(400, e?.message ?? "Revert failed");

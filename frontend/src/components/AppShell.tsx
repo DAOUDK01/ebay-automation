@@ -59,7 +59,11 @@ export function AppShell({ children, header, actions }: { children: ReactNode; h
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div
+      className="min-h-screen bg-slate-50"
+      // fixed bottom bars (save bars) use this to start right of the sidebar
+      style={{ ["--sidebar-w" as string]: collapsed ? "4.5rem" : "16rem" }}
+    >
       <Sidebar
         user={data.user}
         storeId={storeId}

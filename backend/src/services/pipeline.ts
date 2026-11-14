@@ -82,6 +82,7 @@ export function buildChanges(
   cost: number | null,
   s: StoreSettings,
   fitmentRows: FitmentRow[] = [],
+  specificsEvidenceNames: string[] = [],
 ): { changes: ListingChanges; notes: string[]; suggestedCompat: FitmentRow[] } {
   const changes: ListingChanges = {};
   const notes: string[] = [];
@@ -93,7 +94,7 @@ export function buildChanges(
   const p = checkPrice(item, suggestion.recommended_price, cost, s.modules.pricing);
   notes.push(p.note);
   if (p.value) changes.price = p.value;
-  const sp = checkSpecifics(item, suggestion.item_specifics, aspects, s.modules.specifics);
+  const sp = checkSpecifics(item, suggestion.item_specifics, aspects, s.modules.specifics, specificsEvidenceNames);
   notes.push(...sp.notes);
   if (sp.value) changes.itemSpecifics = sp.value;
   const c = checkCompatibility(fitmentRows, s.modules.compatibility);
@@ -107,7 +108,9 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
     throw new BudgetExceeded(`Monthly Claude budget $${s.claude.monthlyBudgetUsd} reached`);
   }
   const item = await deps.trading.getItem(itemId);
-  const base = { storeId: store._id, batchId, itemId, before: item };
+  // snapshot for review/revert; the raw description HTML isn't needed for optimizer changes
+  const { descriptionHtml: _html, ...snapshot } = item;
+  const base = { storeId: store._id, batchId, itemId, before: snapshot };
   if (!["FixedPriceItem", "StoresFixedPrice"].includes(item.listingType)) {
     await Proposal.create({ ...base, status: "skipped", notes: ["auction listing - skipped"] });
     return "skipped";
@@ -138,7 +141,12 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
       aspects,
       competitors,
       { ...s.claude, titleTemplate: s.modules.title.enabled ? s.modules.title.template : "" },
-      { partNumbers: evidence.partNumbers, summary: evidence.summary, referenceCount: evidence.references.length },
+      {
+        partNumbers: evidence.partNumbers,
+        summary: evidence.summary,
+        referenceCount: evidence.references.filter((r) => r.rowCount > 0).length,
+        specifics: evidence.specifics,
+      },
     );
   } catch (e: any) {
     if (e?.costUsd) await addUsage(store._id, e.costUsd, 0, 0);
@@ -148,11 +156,20 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
 
   const fit = await buildFitmentRows(item, evidence, result.suggestion.compatibility, fitDeps, s);
   const listing = await Listing.findOne({ storeId: store._id, itemId }).lean();
-  const { changes, notes, suggestedCompat } = buildChanges(item, result.suggestion, aspects, listing?.cost ?? null, s, fit.rows);
+  const { changes, notes, suggestedCompat } = buildChanges(
+    item,
+    result.suggestion,
+    aspects,
+    listing?.cost ?? null,
+    s,
+    fit.rows,
+    evidence.specifics.map((e) => e.name),
+  );
   const status = Object.keys(changes).length ? "proposed" : "no_change";
+  const withFitment = evidence.references.filter((r) => r.rowCount > 0).length;
   const fitNote = evidence.partNumbers.length
-    ? `fitment research: part number(s) ${evidence.partNumbers.join(", ")} - ${evidence.references.length} other eBay listing(s) with fitment found`
-    : "fitment research: no part number found in title/specifics";
+    ? `part-number research: ${evidence.partNumbers.join(", ")} - ${evidence.references.length} other eBay listing(s) read (${withFitment} with fitment, ${evidence.specifics.length} distinct item specifics)`
+    : "part-number research: no part number found in title/specifics";
   await Proposal.create({
     ...base,
     status,
@@ -167,7 +184,7 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
     notes: [
       `competitor query: "${query}" (${competitors.length} found)`,
       ...(aspectNote ? [aspectNote] : []),
-      ...(s.modules.compatibility.enabled ? [fitNote] : []),
+      ...(s.modules.compatibility.enabled || s.modules.specifics.enabled ? [fitNote] : []),
       ...notes,
     ],
     competitorQuery: query,
@@ -351,6 +368,11 @@ export async function revertProposal(store: StoreDocument, deps: PipelineDeps, p
   if (changes.title) revert.title = before.title;
   if (changes.price) revert.price = before.price;
   if (changes.itemSpecifics) revert.itemSpecifics = before.itemSpecifics;
+  // eBay's <Quantity> is the listing total (available + sold); changes.quantity is stored the same way
+  if (changes.quantity !== undefined) revert.quantity = before.quantity;
+  if (changes.description !== undefined && before.descriptionHtml !== undefined) revert.description = before.descriptionHtml;
+  // a manual fitment edit replaced the whole list -> put the old list back (only possible if we saved it)
+  if (changes.compatibilityReplace && before.compatibilityAll) revert.compatibilityReplace = before.compatibilityAll;
   if (!Object.keys(revert).length) throw new Error("Nothing to revert (compatibility-only change)");
   await deps.trading.reviseItem(p.itemId, revert, before?.site);
   p.status = "reverted";

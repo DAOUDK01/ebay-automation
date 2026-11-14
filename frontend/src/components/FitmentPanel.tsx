@@ -46,7 +46,8 @@ export function FitmentPanel({ rows, fitment, pushing }: { rows: FitmentRow[]; f
     return c;
   }, [rows]);
 
-  const refs = fitment?.references ?? [];
+  // references now also include listings read only for their item specifics (rowCount 0)
+  const refs = (fitment?.references ?? []).filter((r) => r.rowCount > 0);
   const nothingFound = !rows.length;
 
   return (

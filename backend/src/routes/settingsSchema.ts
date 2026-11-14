@@ -42,7 +42,13 @@ export const settingsSchema = z.object({
       feePct: z.number().min(0).max(60),
       minPrice: z.number().min(0),
     }),
-    specifics: z.object({ enabled: z.boolean(), overwriteExisting: z.boolean() }),
+    specifics: z.object({
+      enabled: z.boolean(),
+      overwriteExisting: z.boolean(),
+      useOtherListings: z.boolean().default(true),
+      allowKnowledge: z.boolean().default(true),
+      allowCustomNames: z.boolean().default(true),
+    }),
     compatibility: z.object({
       enabled: z.boolean(),
       apply: z.boolean(),

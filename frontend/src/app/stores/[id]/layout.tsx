@@ -8,7 +8,7 @@ import { AppShell } from "@/components/AppShell";
 import { StoreCtx, type StoreDetail } from "@/components/StoreContext";
 import { Alert, Badge, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
-import { findNavItem } from "@/lib/nav";
+import { findNavItem, storeHref } from "@/lib/nav";
 
 export default function StoreLayout({ children }: { children: ReactNode }) {
   const { id } = useParams<{ id: string }>();
@@ -16,6 +16,8 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
   const { data, error, mutate } = useSWR<StoreDetail>(`/stores/${id}`, fetcher, { refreshInterval: 5000 });
   const page = findNavItem(pathname, id);
   const PageIcon = page?.icon;
+  // nested pages (a single listing, a single batch) render their own header
+  const isSectionRoot = page ? pathname === storeHref(id, page.path) : false;
 
   const header = (
     <nav className="flex min-w-0 items-center gap-1.5 text-sm">
@@ -55,7 +57,7 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
         </div>
       ) : (
         <StoreCtx.Provider value={{ data, mutate }}>
-          {page && (
+          {page && isSectionRoot && (
             <div className="mb-6 flex items-start gap-3">
               {PageIcon && (
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">

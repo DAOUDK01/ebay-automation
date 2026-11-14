@@ -42,7 +42,12 @@ export interface EbayItem {
   };
   pictureCount: number;
   imageUrl: string;
+  /** all photo URLs (preview gallery) */
+  pictures?: string[];
   descriptionText: string;
+  /** raw description HTML (preview/edit only - never sent to Claude) */
+  descriptionHtml?: string;
+  conditionDescription?: string;
   url: string;
   /** Trading API site code the listing lives on, e.g. "US" or "eBayMotors" */
   site?: string;
@@ -89,6 +94,13 @@ export interface FitmentReference {
 export interface ListingChanges {
   title?: string;
   price?: number;
+  /** manual edits only */
+  quantity?: number;
+  /** manual edits only: full description HTML */
+  description?: string;
   itemSpecifics?: Specifics;
+  /** optimizer: rows added to the existing fitment */
   compatibilityAdd?: CompatRow[];
+  /** manual edits only: the complete fitment list (replaces eBay's) */
+  compatibilityReplace?: CompatRow[];
 }

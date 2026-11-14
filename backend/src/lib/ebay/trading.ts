@@ -105,17 +105,37 @@ export function normalizeItem(itemId: string, it: any): EbayItem {
     },
     pictureCount: pics.length,
     imageUrl: txt(pics[0]),
+    pictures: pics.map(txt).filter(Boolean),
     descriptionText: htmlToText(txt(it.Description)),
+    descriptionHtml: txt(it.Description),
+    conditionDescription: txt(it.ConditionDescription),
     url: txt(it.ListingDetails?.ViewItemURL),
     site: txt(it.Site),
   };
 }
 
-/** Pure function: ListingChanges -> <Item> XML for ReviseFixedPriceItem. Exported for tests. */
+const compatXml = (rows: CompatRow[]) =>
+  rows
+    .map((row) => {
+      const nvs = Object.entries(row)
+        .filter(([k, v]) => v && !k.startsWith("_"))
+        .map(([k, v]) => `<NameValueList><Name>${xmlEscape(k)}</Name><Value>${xmlEscape(v)}</Value></NameValueList>`)
+        .join("");
+      return `<Compatibility>${nvs}</Compatibility>`;
+    })
+    .join("");
+
+/** CDATA can't contain "]]>" - split it across two sections. */
+const cdata = (s: string) => `<![CDATA[${s.replace(/]]>/g, "]]]]><![CDATA[>")}]]>`;
+
+/** Pure function: ListingChanges -> request body for ReviseFixedPriceItem. Exported for tests. */
 export function buildReviseXml(itemId: string, changes: ListingChanges): string {
   const parts = [`<ItemID>${xmlEscape(itemId)}</ItemID>`];
+  const deleteFields: string[] = [];
   if (changes.title) parts.push(`<Title>${xmlEscape(changes.title)}</Title>`);
   if (changes.price) parts.push(`<StartPrice>${changes.price.toFixed(2)}</StartPrice>`);
+  if (changes.quantity !== undefined) parts.push(`<Quantity>${Math.max(0, Math.floor(changes.quantity))}</Quantity>`);
+  if (changes.description !== undefined) parts.push(`<Description>${cdata(changes.description)}</Description>`);
   if (changes.itemSpecifics) {
     const nvs = Object.entries(changes.itemSpecifics)
       .map(([name, values]) => {
@@ -125,19 +145,17 @@ export function buildReviseXml(itemId: string, changes: ListingChanges): string 
       .join("");
     parts.push(`<ItemSpecifics>${nvs}</ItemSpecifics>`);
   }
-  if (changes.compatibilityAdd?.length) {
-    const rows = changes.compatibilityAdd
-      .map((row) => {
-        const nvs = Object.entries(row)
-          .filter(([, v]) => v)
-          .map(([k, v]) => `<NameValueList><Name>${xmlEscape(k)}</Name><Value>${xmlEscape(v)}</Value></NameValueList>`)
-          .join("");
-        return `<Compatibility>${nvs}</Compatibility>`;
-      })
-      .join("");
-    parts.push(`<ItemCompatibilityList><ReplaceAll>false</ReplaceAll>${rows}</ItemCompatibilityList>`);
+  if (changes.compatibilityReplace) {
+    // manual edit: the full list replaces whatever eBay has; empty list = remove all fitment
+    if (changes.compatibilityReplace.length) {
+      parts.push(`<ItemCompatibilityList><ReplaceAll>true</ReplaceAll>${compatXml(changes.compatibilityReplace)}</ItemCompatibilityList>`);
+    } else {
+      deleteFields.push("Item.ItemCompatibilityList");
+    }
+  } else if (changes.compatibilityAdd?.length) {
+    parts.push(`<ItemCompatibilityList><ReplaceAll>false</ReplaceAll>${compatXml(changes.compatibilityAdd)}</ItemCompatibilityList>`);
   }
-  return `<Item>${parts.join("")}</Item>`;
+  return `<Item>${parts.join("")}</Item>${deleteFields.map((f) => `<DeleteField>${f}</DeleteField>`).join("")}`;
 }
 
 export class TradingClient {
@@ -236,16 +254,23 @@ export class TradingClient {
     return normalizeItem(itemId, it);
   }
 
-  /** Compatibility table of ANY public listing (used to learn fitment from other listings of the same part number). */
-  async getItemCompatibility(itemId: string): Promise<{ itemId: string; title: string; rows: CompatRow[] }> {
+  /** Compatibility table + item specifics of ANY public listing - used to learn fitment and specifics
+   *  from other listings of the same part number (one call per reference listing). */
+  async getItemCompatibility(itemId: string): Promise<{ itemId: string; title: string; rows: CompatRow[]; specifics: Specifics }> {
     const root = await this.call(
       "GetItem",
       `<ItemID>${xmlEscape(itemId)}</ItemID><IncludeItemCompatibilityList>true</IncludeItemCompatibilityList>` +
+        `<IncludeItemSpecifics>true</IncludeItemSpecifics>` +
         `<OutputSelector>Item.ItemID</OutputSelector><OutputSelector>Item.Title</OutputSelector>` +
-        `<OutputSelector>Item.ItemCompatibilityList</OutputSelector>`,
+        `<OutputSelector>Item.ItemCompatibilityList</OutputSelector><OutputSelector>Item.ItemSpecifics</OutputSelector>`,
     );
     const it = (root.Item ?? [])[0];
-    return { itemId, title: txt(it?.Title), rows: parseCompatibility(it) };
+    const specifics: Specifics = {};
+    for (const nv of it?.ItemSpecifics?.NameValueList ?? []) {
+      const name = txt(nv.Name);
+      if (name) specifics[name] = (nv.Value ?? []).map(txt).filter(Boolean);
+    }
+    return { itemId, title: txt(it?.Title), rows: parseCompatibility(it), specifics };
   }
 
   /** Returns warning messages (if any). Throws on failure.

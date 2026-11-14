@@ -257,12 +257,35 @@ export default function SettingsPage() {
 
           <div>
             <Toggle checked={s.modules.specifics.enabled} onChange={(v) => up("modules.specifics.enabled", v)} label={<b>Item specifics</b>} />
-            <div className="ml-11 mt-2">
+            <div className="ml-11 mt-2 space-y-3">
+              <Toggle
+                checked={s.modules.specifics.useOtherListings}
+                disabled={!s.modules.specifics.enabled}
+                onChange={(v) => up("modules.specifics.useOtherListings", v)}
+                label="Learn specifics from other eBay listings with the same part number"
+              />
+              <Toggle
+                checked={s.modules.specifics.allowKnowledge}
+                disabled={!s.modules.specifics.enabled}
+                onChange={(v) => up("modules.specifics.allowKnowledge", v)}
+                label="Let Claude add part-level facts it knows for the part number (interchange numbers, features… high confidence only)"
+              />
+              <Toggle
+                checked={s.modules.specifics.allowCustomNames}
+                disabled={!s.modules.specifics.enabled}
+                onChange={(v) => up("modules.specifics.allowCustomNames", v)}
+                label="Allow useful specifics not in eBay's list for the category (Interchange / Superseded / OE part numbers…)"
+              />
               <Toggle
                 checked={s.modules.specifics.overwriteExisting}
+                disabled={!s.modules.specifics.enabled}
                 onChange={(v) => up("modules.specifics.overwriteExisting", v)}
                 label="Also correct existing specifics (default: only add missing ones)"
               />
+              <p className="text-xs text-slate-500">
+                Color, condition, warranty and included items always come from your own listing - never from other sellers or Claude&apos;s
+                knowledge. eBay allows up to 45 specifics per listing.
+              </p>
             </div>
           </div>
 

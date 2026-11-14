@@ -10,7 +10,12 @@ const FALLBACK_MODELS = new Set(["claude-opus-5-5", "claude-opus-5", "claude-son
 export interface ClaudeSuggestion {
   title: string;
   title_reason: string;
-  item_specifics: { name: string; values: string[]; source: string }[];
+  item_specifics: {
+    name: string;
+    values: string[];
+    source: "listing_text" | "other_listings" | "part_number_knowledge";
+    confidence: "low" | "medium" | "high";
+  }[];
   recommended_price: number;
   price_reason: string;
   compatibility: {
@@ -47,13 +52,27 @@ Title rules:
   location like "Front Left" -> "FL" only if needed, drop filler words) - never drop the fixed text.
   This store format overrides the general "search words first" ordering above.
 
-Item specifics rules:
-- Fill in MISSING aspects, prioritising REQUIRED then RECOMMENDED ones.
-- Only use facts found in the title, description or existing specifics, or that follow with
-  certainty from them. If unknown, leave the aspect out. Never guess. "Does Not Apply" only for
-  Brand/MPN when the item is genuinely unbranded / has no part number.
-- For SELECTION_ONLY aspects you must use one of the allowed values exactly as written.
-- Use the exact aspect name as given.
+Item specifics rules (more complete specifics = better search ranking, so fill as many as you can
+determine reliably):
+- "missing_aspects" lists every aspect eBay supports for the category that the listing doesn't have
+  yet (REQUIRED first, then RECOMMENDED, then OPTIONAL). Try to fill all of them.
+- "specifics_evidence" (if present) shows the item specifics used by other eBay listings of the SAME
+  part number, with how many listings use each value. Use it for part-level facts.
+- You may also add these part-number specifics even if not in missing_aspects: "Interchange Part
+  Number", "Superseded Part Number", "OE/OEM Part Number", "Manufacturer Part Number", "Other Part
+  Number" (multiple values allowed, one part number per value).
+- Every value needs a source:
+  * "listing_text": stated in this listing's title, description or existing specifics.
+  * "other_listings": taken from specifics_evidence (prefer values several listings agree on).
+  * "part_number_knowledge": you know it for certain about this exact OEM part number (e.g.
+    interchange/superseded numbers, mirror features like heated/power-folding, material, type).
+  Set confidence honestly; only "high" knowledge values are used.
+- Attributes that can differ between two copies of the same part - Color, Condition, Warranty,
+  Items Included, Custom Bundle, Modified Item - must come ONLY from this listing's own text.
+- Never contradict this listing (position, side, condition). Leave an aspect out if unsure.
+  "Does Not Apply" only for Brand/MPN when the item is genuinely unbranded / has no part number.
+- For SELECTION_ONLY aspects use one of the allowed values exactly as written; use the exact aspect
+  name as given; each value max 65 characters.
 
 Pricing rules:
 - Compare against competitors with the same condition and the closest match (total price =
@@ -96,9 +115,10 @@ export const SUGGESTION_SCHEMA = {
         properties: {
           name: { type: "string" },
           values: { type: "array", items: { type: "string" } },
-          source: { type: "string" },
+          source: { type: "string", enum: ["listing_text", "other_listings", "part_number_knowledge"] },
+          confidence: { type: "string", enum: ["low", "medium", "high"] },
         },
-        required: ["name", "values", "source"],
+        required: ["name", "values", "source", "confidence"],
         additionalProperties: false,
       },
     },
@@ -132,16 +152,20 @@ export const SUGGESTION_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/** Every aspect of the category the listing doesn't have yet: required, then recommended, then optional. */
 export function missingAspectsForPrompt(aspects: Aspect[], existing: Record<string, string[]>) {
   const have = new Set(Object.keys(existing).map((k) => k.toLowerCase()));
+  const rank = (a: Aspect) => (a.required ? 0 : a.usage === "RECOMMENDED" ? 1 : 2);
   return aspects
-    .filter((a) => !have.has(a.name.toLowerCase()) && (a.required || a.usage === "RECOMMENDED"))
+    .filter((a) => !have.has(a.name.toLowerCase()))
+    .sort((a, b) => rank(a) - rank(b))
+    .slice(0, 60)
     .map((a) => ({
       name: a.name,
-      required: a.required,
+      importance: a.required ? "REQUIRED" : a.usage === "RECOMMENDED" ? "RECOMMENDED" : "OPTIONAL",
       mode: a.mode,
       multi_value: a.multi,
-      allowed_values: a.values.slice(0, a.mode === "SELECTION_ONLY" ? 60 : 15),
+      allowed_values: a.values.slice(0, a.mode === "SELECTION_ONLY" ? 60 : 10),
     }));
 }
 
@@ -169,9 +193,15 @@ export async function suggestImprovements(
   aspects: Aspect[],
   competitors: Competitor[],
   opts: ClaudeOptions,
-  fitment?: { partNumbers: string[]; summary: FitmentEvidence["summary"]; referenceCount: number },
+  fitment?: {
+    partNumbers: string[];
+    summary: FitmentEvidence["summary"];
+    referenceCount: number;
+    specifics?: FitmentEvidence["specifics"];
+  },
 ): Promise<SuggestResult> {
-  const { itemId, url, imageUrl, categoryId, conditionId, variationNames, compatibilityAll, site, ...listing } = item;
+  const { itemId, url, imageUrl, categoryId, conditionId, variationNames, compatibilityAll, site, pictures, descriptionHtml, ...listing } =
+    item;
   const payload = {
     ...(opts.titleTemplate?.trim() ? { store_title_format: opts.titleTemplate.trim() } : {}),
     listing,
@@ -181,6 +211,7 @@ export async function suggestImprovements(
     ...(fitment?.summary.length
       ? { fitment_evidence: { reference_listings: fitment.referenceCount, vehicles: fitment.summary } }
       : {}),
+    ...(fitment?.specifics?.length ? { specifics_evidence: fitment.specifics } : {}),
   };
   const request = {
     model: opts.model,

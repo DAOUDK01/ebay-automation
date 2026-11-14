@@ -154,10 +154,33 @@ async function main() {
         },
       },
     ),
-    p(1, "proposed", {
-      title: "Rear Brake Rotors Pair Fits Toyota Camry 2018-2023 Drilled Slotted",
-      itemSpecifics: { Brand: ["Unbranded"], Placement: ["Rear"], "Manufacturer Part Number": ["DPO-1001"] },
-    }),
+    p(
+      1,
+      "proposed",
+      {
+        title: "Rear Brake Rotors Pair Fits Toyota Camry 2018-2023 Drilled Slotted",
+        itemSpecifics: {
+          Brand: ["Unbranded"],
+          Placement: ["Rear"],
+          "Manufacturer Part Number": ["DPO-1001"],
+          "Interchange Part Number": ["42431-06190", "42431-33120"],
+          "Rotor Design": ["Drilled & Slotted"],
+          "Number of Pieces": ["2"],
+        },
+      },
+      {
+        suggestion: {
+          title_reason: "Leads with part type and fitment years.",
+          confidence: "high",
+          item_specifics: [
+            { name: "Manufacturer Part Number", values: ["DPO-1001"], source: "listing_text", confidence: "high" },
+            { name: "Interchange Part Number", values: ["42431-06190", "42431-33120"], source: "part_number_knowledge", confidence: "high" },
+            { name: "Rotor Design", values: ["Drilled & Slotted"], source: "other_listings", confidence: "high" },
+            { name: "Number of Pieces", values: ["2"], source: "listing_text", confidence: "high" },
+          ],
+        },
+      },
+    ),
     p(2, "approved", { title: "Engine Air Filter for Ford F-150 2015-2020 5.0L V8 Replacement" }),
     p(3, "pushed", { title: "Cabin Air Filter with Activated Carbon for Chevy Silverado 1500 2014-2019" }, { pushedAt: new Date(now - 2 * 3600_000) }),
     p(4, "no_change", {}),

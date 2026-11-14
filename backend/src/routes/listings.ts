@@ -4,6 +4,8 @@ import { loadStore } from "../middleware/auth";
 import { HttpError, parseBody } from "../middleware/error";
 import { Listing } from "../models/Listing";
 import { Proposal } from "../models/Proposal";
+import { computeManualChanges } from "../services/listingEdit";
+import { defaultDeps } from "../services/pipeline";
 
 const router = Router({ mergeParams: true });
 
@@ -27,6 +29,89 @@ router.get("/", async (req, res) => {
     Listing.countDocuments(filter),
   ]);
   res.json({ items, total, page, pageSize });
+});
+
+/** Full listing, live from eBay (photos, description, specifics, full fitment) + the category's aspects for editing. */
+router.get("/:itemId/details", async (req, res) => {
+  const store = await loadStore(req);
+  const itemId = String(req.params.itemId);
+  const listing = await Listing.findOne({ storeId: store._id, itemId }).lean();
+  if (!listing) throw new HttpError(404, "Listing not found");
+  const deps = defaultDeps(store);
+  let item;
+  try {
+    item = await deps.trading.getItem(itemId);
+  } catch (e: any) {
+    throw new HttpError(502, `Couldn't load the listing from eBay: ${e?.message ?? e}`);
+  }
+  let aspects: { name: string; required: boolean; usage: string; mode: string; multi: boolean; values: string[] }[] = [];
+  try {
+    aspects = (await deps.rest.aspectsForCategory(item.categoryId)).map((a) => ({ ...a, values: a.values.slice(0, 200) }));
+  } catch {
+    /* edit page still works without suggestions */
+  }
+  res.json({ item, listing, aspects });
+});
+
+const manualEditSchema = z.object({
+  title: z.string().max(200).optional(),
+  price: z.number().optional(),
+  quantityAvailable: z.number().int().min(0).max(100000).optional(),
+  description: z.string().max(600_000).optional(),
+  itemSpecifics: z.record(z.string(), z.array(z.string().max(200)).max(100)).optional(),
+  compatibility: z
+    .array(
+      z.object({
+        Year: z.string().max(10),
+        Make: z.string().max(100),
+        Model: z.string().max(100),
+        Trim: z.string().max(200).optional(),
+        Engine: z.string().max(200).optional(),
+      }),
+    )
+    .max(5000)
+    .optional(),
+});
+
+/** Save manual edits straight to eBay; recorded in Change history (revertable). */
+router.put("/:itemId", async (req, res) => {
+  const store = await loadStore(req);
+  const itemId = String(req.params.itemId);
+  const body = parseBody(manualEditSchema, req.body);
+  if (!(await Listing.exists({ storeId: store._id, itemId }))) throw new HttpError(404, "Listing not found");
+  const deps = defaultDeps(store);
+  const before = await deps.trading.getItem(itemId); // fresh snapshot = what revert restores
+  let changes;
+  try {
+    changes = computeManualChanges(before, body);
+  } catch (e: any) {
+    throw new HttpError(400, e.message);
+  }
+  if (!Object.keys(changes).length) throw new HttpError(400, "Nothing changed");
+
+  let warnings: string[] = [];
+  try {
+    warnings = await deps.trading.reviseItem(itemId, changes, before.site);
+  } catch (e: any) {
+    throw new HttpError(400, `eBay rejected the update: ${e?.message ?? e}`);
+  }
+  const proposal = await Proposal.create({
+    storeId: store._id,
+    batchId: null,
+    kind: "manual",
+    itemId,
+    status: "pushed",
+    before,
+    changes,
+    notes: [`manual edit: ${Object.keys(changes).join(", ")}`],
+    warnings,
+    pushedAt: new Date(),
+  });
+  const set: Record<string, unknown> = {};
+  if (changes.title) set.title = changes.title;
+  if (changes.price) set.price = changes.price;
+  if (Object.keys(set).length) await Listing.updateOne({ storeId: store._id, itemId }, { $set: set });
+  res.json({ proposalId: String(proposal._id), changed: Object.keys(changes), warnings });
 });
 
 /** Full change history for one listing */

@@ -30,7 +30,7 @@ const ITEM = (id: string, title: string): EbayItem => ({
 const SUGGESTION: ClaudeSuggestion = {
   title: "Acme Front Ceramic Brake Pad Set for 2016-2017 Honda Civic AC-555",
   title_reason: "brand + MPN + fitment",
-  item_specifics: [{ name: "Manufacturer Part Number", values: ["AC-555"], source: "description" }],
+  item_specifics: [{ name: "Manufacturer Part Number", values: ["AC-555"], source: "listing_text", confidence: "high" }],
   recommended_price: 36,
   price_reason: "competitors 35-38",
   compatibility: [{ year: "2016", make: "Honda", model: "Civic", trim: "", engine: "", source: "listing_text", confidence: "high" }],
@@ -218,7 +218,8 @@ test("a failed category lookup does not sink the listing; retry-errors re-queues
   const p = await Proposal.findOne({ batchId: batch!._id, itemId: "2" }).lean();
   assert.notEqual(p!.status, "error");
   assert.ok(p!.notes.some((n: string) => n.startsWith("item specifics skipped")));
-  assert.equal(p!.changes.itemSpecifics, undefined);
+  // category aspects unknown -> only well-known part-number specifics can still be added
+  assert.deepEqual(p!.changes.itemSpecifics, { Brand: ["Acme"], "Manufacturer Part Number": ["AC-555"] });
   assert.ok(p!.changes.title, "title still optimized");
 
   // retry endpoint: batch #1 had one failed listing ("3")
@@ -254,6 +255,40 @@ test("store title format reaches Claude and missing fixed text is rejected", asy
   const p = await Proposal.findOne({ batchId: batch!._id, itemId: "2" }).lean();
   assert.equal(p!.changes.title, undefined, "title without 'Used OEM' is not applied");
   assert.ok(p!.notes.some((n: string) => /missing required text "Used OEM"/.test(n)));
+});
+
+test("manual edits are revertable: description, quantity and the full fitment list come back", async () => {
+  const before = {
+    ...ITEM("1", "Old title"),
+    quantity: 4,
+    quantitySold: 1,
+    descriptionHtml: "<p>old</p>",
+    compatibilityAll: [{ Year: "2016", Make: "Honda", Model: "Civic" }],
+  };
+  const p = await Proposal.create({
+    storeId: store._id,
+    batchId: null,
+    kind: "manual",
+    itemId: "1",
+    status: "pushed",
+    before,
+    changes: { title: "New title", quantity: 9, description: "<p>new</p>", compatibilityReplace: [] },
+    notes: ["manual edit"],
+    pushedAt: new Date(),
+  });
+  const n = revised.length;
+  // history API lists manual edits too
+  const h = await call(`/stores/${String(store._id)}/proposals?status=pushed`);
+  assert.ok(h.json.items.some((x: any) => x._id === String(p._id) && x.kind === "manual"));
+  // revert (with the fake eBay client - the API route would call real eBay)
+  const reverted = await revertProposal(store, deps, String(p._id));
+  assert.equal(reverted.status, "reverted");
+  assert.equal(reverted.batchId, null, "manual edit has no batch");
+  const sent = revised[n].changes;
+  assert.equal(sent.title, "Old title");
+  assert.equal(sent.quantity, 4);
+  assert.equal(sent.description, "<p>old</p>");
+  assert.deepEqual(sent.compatibilityReplace, [{ Year: "2016", Make: "Honda", Model: "Civic" }]);
 });
 
 test("costs CSV import + store isolation", async () => {

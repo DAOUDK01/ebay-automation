@@ -2,7 +2,7 @@
 import type { StoreSettings } from "../models/Store";
 import type { ClaudeSuggestion } from "./claude";
 import type { Aspect, CompatRow, EbayItem, FitmentRow, Specifics } from "./ebay/types";
-import { toCompatRows } from "./fitment";
+import { PER_COPY_SPECIFICS, toCompatRows } from "./fitment";
 
 const BANNED_TITLE = /(l@@k|\bwow\b|!!|\*|\bbest\b|\bcheap\b|free shipping)/i;
 
@@ -65,32 +65,68 @@ export function checkPrice(
 }
 
 /** Returns the FULL new specifics set (eBay replaces the whole set on revise) or null if nothing changes. */
+/** Part-number specifics eBay accepts as custom names even when not in the category's aspect list. */
+const PART_NUMBER_SPECIFICS = new Map(
+  ["Interchange Part Number", "Superseded Part Number", "OE/OEM Part Number", "Manufacturer Part Number", "Other Part Number"].map((n) => [
+    n.toLowerCase(),
+    n,
+  ]),
+);
+const MAX_SPECIFICS = 45;
+
 export function checkSpecifics(
   item: Pick<EbayItem, "itemSpecifics" | "variationNames">,
   suggested: ClaudeSuggestion["item_specifics"],
   aspects: Aspect[],
   s: StoreSettings["modules"]["specifics"],
+  /** specific names used by other listings of the same part number (allowed as custom names) */
+  evidenceNames: string[] = [],
 ): { value: Specifics | null; notes: string[] } {
   if (!s.enabled) return { value: null, notes: ["specifics: module disabled"] };
   const byName = new Map(aspects.map((a) => [a.name.toLowerCase(), a]));
+  const evidence = new Map(evidenceNames.map((n) => [n.toLowerCase(), n]));
   const variation = new Set(item.variationNames.map((n) => n.toLowerCase()));
   const current: Specifics = Object.fromEntries(Object.entries(item.itemSpecifics).map(([k, v]) => [k, [...v]]));
   const currentLower = new Map(Object.keys(current).map((k) => [k.toLowerCase(), k]));
   const notes: string[] = [];
   let changed = false;
 
-  for (const sug of suggested ?? []) {
+  // category aspects first (required > recommended > optional), custom names last - so the 45 limit keeps the important ones
+  const rank = (n: string) => {
+    const a = byName.get(n.toLowerCase());
+    return !a ? 3 : a.required ? 0 : a.usage === "RECOMMENDED" ? 1 : 2;
+  };
+  const ordered = [...(suggested ?? [])].sort((x, y) => rank(x.name ?? "") - rank(y.name ?? ""));
+
+  for (const sug of ordered) {
     let name = (sug.name || "").trim();
-    let values = (sug.values ?? []).map((v) => v.trim()).filter(Boolean);
+    let values = [...new Set((sug.values ?? []).map((v) => v.trim()).filter(Boolean))];
     if (!name || !values.length) continue;
-    const a = byName.get(name.toLowerCase());
-    if (!a) {
-      notes.push(`skip '${name}': not an aspect of this category`);
+    const source = sug.source ?? "listing_text";
+    if (source === "part_number_knowledge" && (!s.allowKnowledge || sug.confidence !== "high")) {
+      notes.push(`skip '${name}': part-number knowledge ${s.allowKnowledge ? `(${sug.confidence} confidence)` : "(disabled)"}`);
       continue;
     }
-    name = a.name;
+    if (source === "other_listings" && !s.useOtherListings) continue;
+    if (source !== "listing_text" && PER_COPY_SPECIFICS.test(name)) {
+      notes.push(`skip '${name}': describes this copy of the part, so it must come from your own listing`);
+      continue;
+    }
+    const a = byName.get(name.toLowerCase());
+    if (!a) {
+      const custom = PART_NUMBER_SPECIFICS.get(name.toLowerCase()) ?? evidence.get(name.toLowerCase());
+      if (!s.allowCustomNames || !custom || name.length > 65) {
+        notes.push(`skip '${name}': not an aspect of this category`);
+        continue;
+      }
+      name = custom;
+      values = values.filter((v) => v.length <= 65).slice(0, 30);
+      if (!values.length) continue;
+    } else {
+      name = a.name;
+    }
     if (variation.has(name.toLowerCase())) continue;
-    if (a.mode === "SELECTION_ONLY") {
+    if (a && a.mode === "SELECTION_ONLY") {
       const allowed = new Map(a.values.map((v) => [v.toLowerCase(), v]));
       const bad = values.filter((v) => !allowed.has(v.toLowerCase()));
       if (bad.length) {
@@ -99,23 +135,27 @@ export function checkSpecifics(
       }
       values = values.map((v) => allowed.get(v.toLowerCase())!);
     }
-    if (!a.multi) values = values.slice(0, 1);
-    if (a.maxLength) values = values.filter((v) => v.length <= a.maxLength!);
+    if (a && !a.multi) values = values.slice(0, 1);
+    if (a?.maxLength) values = values.filter((v) => v.length <= a.maxLength!);
     if (!values.length) continue;
 
     const existingKey = currentLower.get(name.toLowerCase());
+    const via = source === "listing_text" ? "" : source === "other_listings" ? " (from other listings)" : " (part-number knowledge)";
     if (existingKey) {
       if (!s.overwriteExisting || JSON.stringify(current[existingKey]) === JSON.stringify(values)) continue;
-      notes.push(`overwrite '${name}': ${JSON.stringify(current[existingKey])} -> ${JSON.stringify(values)}`);
+      notes.push(`overwrite '${name}': ${JSON.stringify(current[existingKey])} -> ${JSON.stringify(values)}${via}`);
       current[existingKey] = values;
     } else {
-      notes.push(`add '${name}': ${JSON.stringify(values)}`);
+      if (Object.keys(current).length >= MAX_SPECIFICS) {
+        notes.push(`skip '${name}': eBay allows max ${MAX_SPECIFICS} item specifics`);
+        continue;
+      }
+      notes.push(`add '${name}': ${JSON.stringify(values)}${via}`);
       current[name] = values;
       currentLower.set(name.toLowerCase(), name);
     }
     changed = true;
   }
-  if (Object.keys(current).length > 45) return { value: null, notes: [...notes, "specifics: too many (>45), skipped"] };
   return { value: changed ? current : null, notes };
 }
 

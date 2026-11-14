@@ -32,7 +32,13 @@ export interface StoreSettings {
       feePct: number;
       minPrice: number;
     };
-    specifics: { enabled: boolean; overwriteExisting: boolean };
+    specifics: {
+      enabled: boolean;
+      overwriteExisting: boolean;
+      useOtherListings: boolean;
+      allowKnowledge: boolean;
+      allowCustomNames: boolean;
+    };
     compatibility: {
       enabled: boolean;
       apply: boolean;
@@ -116,7 +122,46 @@ export interface EbayItemSnapshot {
   imageUrl: string;
   url: string;
   itemSpecifics: Record<string, string[]>;
-  shipping?: { dispatchDays: string; policy: string; options: { service: string; cost: string; free: boolean }[] };
+  shipping?: { dispatchDays: string; policy: string; location?: string; options: { service: string; cost: string; free: boolean }[] };
+}
+
+export type CompatRow = { Year: string; Make: string; Model: string; Trim?: string; Engine?: string };
+
+/** Full listing as returned live from eBay by GET /listings/:itemId/details */
+export interface EbayItem extends EbayItemSnapshot {
+  subtitle: string;
+  sku: string;
+  listingType: string;
+  categoryId: string;
+  conditionId: string;
+  conditionDescription?: string;
+  quantity: number;
+  quantitySold: number;
+  watchCount: number;
+  hasVariations: boolean;
+  variationNames: string[];
+  compatibilityCount: number;
+  compatibilityAll?: CompatRow[];
+  pictures?: string[];
+  descriptionHtml?: string;
+  descriptionText: string;
+  site?: string;
+  shipping: { dispatchDays: string; policy: string; location: string; options: { service: string; cost: string; free: boolean }[] };
+}
+
+export interface CategoryAspect {
+  name: string;
+  required: boolean;
+  usage: string;
+  mode: string;
+  multi: boolean;
+  values: string[];
+}
+
+export interface ListingDetails {
+  item: EbayItem;
+  listing: Listing;
+  aspects: CategoryAspect[];
 }
 
 export interface FitmentRow {
@@ -145,6 +190,7 @@ export interface Proposal {
   suggestion: {
     title?: string;
     title_reason?: string;
+    item_specifics?: { name: string; values: string[]; source?: string; confidence?: string }[];
     recommended_price?: number;
     price_reason?: string;
     shipping_notes?: string;
@@ -160,6 +206,7 @@ export interface Proposal {
   };
   notes: string[];
   fitment?: FitmentInfo | null;
+  kind?: "optimizer" | "manual";
   competitors?: { title: string; price: number; shipping: number | null; condition: string; url: string; sellerFeedback: number | null }[];
   error?: string;
   warnings?: string[];

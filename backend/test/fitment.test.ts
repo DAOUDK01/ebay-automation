@@ -33,7 +33,16 @@ const refs: Record<string, CompatRow[]> = {
 };
 const deps: FitmentDeps = {
   searchByPartNumber: async (pn) => (pn === "67002-0C060" ? ["A", "B", "C", "920078281032"].map((id) => ({ itemId: id, title: `ref ${id}`, url: "" })) : []),
-  getItemCompatibility: async (id) => ({ itemId: id, title: `ref ${id}`, rows: refs[id] ?? [] }),
+  getItemCompatibility: async (id) => ({
+    itemId: id,
+    title: `ref ${id}`,
+    rows: refs[id] ?? [],
+    specifics: {
+      "Interchange Part Number": id === "C" ? ["67002-0C061"] : ["67002-0C061", "67002-0C060"],
+      Placement: ["Front Left"],
+      Color: ["Silver"], // per-copy: must be ignored
+    },
+  }),
   validateVehicle: async (_cat, v) => {
     if (v.Make.toLowerCase() === "toyota" && /^(sequoia|tundra)$/i.test(v.Model)) return { ...v, Make: "Toyota", Model: v.Model[0].toUpperCase() + v.Model.slice(1).toLowerCase() };
     if (v.Model === "Unknown") return undefined;
@@ -41,13 +50,25 @@ const deps: FitmentDeps = {
   },
 };
 
-test("evidence: reads reference listings, skips own listing and ones without fitment", async () => {
+test("evidence: reads reference listings (fitment + specifics), skips own listing", async () => {
   const ev = await gatherFitmentEvidence(item(), deps, S);
-  assert.deepEqual(ev.references.map((r) => r.itemId), ["A", "B"]);
+  // C has no fitment but useful specifics -> still read; rowCount 0
+  assert.deepEqual(ev.references.map((r) => `${r.itemId}:${r.rowCount}`), ["A:4", "B:5", "C:0"]);
+  const inter = ev.specifics.find((s) => s.name === "Interchange Part Number")!;
+  assert.equal(inter.listings, 3);
+  assert.deepEqual(inter.values[0], { value: "67002-0C061", listings: 3 });
+  assert.ok(!ev.specifics.some((s) => s.name === "Color"), "per-copy specifics are not learned from other listings");
   assert.equal(ev.rows.find((r) => r.row.Year === "2003" && r.row.Model === "Sequoia")!.support, 2);
   assert.equal(ev.summary[0].listings, 2);
-  const off = await gatherFitmentEvidence(item(), deps, resolveSettings({ modules: { compatibility: { researchEbay: false } } } as any));
-  assert.equal(off.references.length, 0);
+  const off = await gatherFitmentEvidence(
+    item(),
+    deps,
+    resolveSettings({ modules: { compatibility: { researchEbay: false }, specifics: { useOtherListings: false } } } as any),
+  );
+  assert.equal(off.references.length, 0, "no research when both fitment and specifics research are off");
+  const specsOnly = await gatherFitmentEvidence(item(), deps, resolveSettings({ modules: { compatibility: { researchEbay: false } } } as any));
+  assert.equal(specsOnly.rows.length, 0, "fitment off -> no vehicle rows");
+  assert.ok(specsOnly.specifics.length > 0, "but specifics are still learned");
 });
 
 test("build: consensus rows + validated Claude rows, knowledge filtered, existing skipped", async () => {
