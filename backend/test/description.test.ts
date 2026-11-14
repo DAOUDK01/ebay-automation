@@ -9,10 +9,11 @@ import {
   hasContent,
   originalNotes,
   renderAplus,
+  wordmark,
   yearRuns,
 } from "../src/lib/description";
 import type { EbayItem } from "../src/lib/ebay/types";
-import { DEFAULT_SETTINGS } from "../src/models/Store";
+import { DEFAULT_SETTINGS, resolveSettings } from "../src/models/Store";
 import { buildChanges } from "../src/services/pipeline";
 
 const brand = DEFAULT_SETTINGS.modules.description;
@@ -56,6 +57,7 @@ test("helpers: year runs, fitment grouping, link/email stripping, content check"
 test("render: branded, escaped, https photos only, specs ordered, notes kept", () => {
   const html = renderAplus({
     ...base,
+    brand: { ...brand, brandName: "" },
     content: { ...content, highlights: ['<script>alert(1)</script> fits "all"', "see www.other.com"] },
     currentHtml: "<p>Pulled from a 2018 Civic, 62k miles.</p>",
   });
@@ -89,7 +91,7 @@ test("settings: brand name, logo (https only), colour, toggles", () => {
   });
   assert.ok(html.includes("Kazmi Auto"));
   assert.ok(!html.includes("javascript:"));
-  assert.ok(html.includes("#1e3a8a") && !html.includes("red;x"), "bad colour falls back");
+  assert.ok(html.includes("#e11d2a") && !html.includes("red;x"), "bad colour falls back");
   assert.ok(!html.includes("i.ebayimg.com"));
   assert.ok(!html.includes("2016-2018, 2020"));
   assert.ok(!html.includes("old notes"));
@@ -114,4 +116,23 @@ test("pipeline: description change built from final specifics + added fitment", 
   const empty = buildChanges(item, { ...suggestion, description_content: undefined }, [], null, s);
   assert.equal(empty.changes.description, undefined);
   assert.ok(empty.notes.some((n) => /no content/.test(n)));
+});
+
+test("store branding: wordmark highlight, badges, footer, old blue defaults migrate", () => {
+  assert.equal(
+    wordmark("MotorSupply Co", "supply", "#e11d2a").replace(/ style="[^"]*"/g, ""),
+    "<span>Motor<span>Supply</span> Co</span>",
+  );
+  const html = renderAplus(base);
+  assert.ok(html.includes(">Supply</span>"));
+  for (const t of ["Quality parts", "Fast shipping", "Wide selection", "Global delivery", "Thank you for your business.", "#0b0f19"]) assert.ok(html.includes(t), t);
+  // a store saved with the first (generic blue) defaults gets the store look; customised ones are kept
+  const old = { modules: { description: { ...brand, brandName: "", accentColor: "#1e3a8a", badges: undefined } } } as any;
+  const d = resolveSettings(old).modules.description;
+  assert.equal(d.brandName, "MotorSupply Co");
+  assert.equal(d.accentColor, "#e11d2a");
+  assert.equal(d.badges.length, 4);
+  const custom = resolveSettings({ modules: { description: { ...brand, brandName: "My Shop", accentColor: "#1e3a8a" } } } as any).modules.description;
+  assert.equal(custom.brandName, "My Shop");
+  assert.equal(custom.accentColor, "#1e3a8a");
 });

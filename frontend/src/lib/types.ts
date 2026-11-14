@@ -62,9 +62,13 @@ export interface StoreSettings {
 export interface DescriptionBrand {
   enabled: boolean;
   brandName: string;
+  brandHighlight: string;
   tagline: string;
   logoUrl: string;
   accentColor: string;
+  darkColor: string;
+  badges: string[];
+  footerText: string;
   showPhotos: boolean;
   showCompatibility: boolean;
   keepOriginalNotes: boolean;

@@ -1,6 +1,7 @@
 /**
  * Branded "A+" listing description. Claude writes the words (DescriptionContent); this file lays them out
- * in the store's branded template. Output is eBay-safe: inline styles only, no scripts, no forms,
+ * in the store's branded template (styled after the store banner: dark band, red accent, bold italic
+ * wordmark, spaced caps, trust badges). Output is eBay-safe: inline styles only, no scripts, no forms,
  * no off-eBay links, every piece of text HTML-escaped.
  */
 import type { StoreSettings } from "../models/Store";
@@ -143,9 +144,23 @@ function specRows(specs: Specifics, max = 16): [string, string][] {
 /** True if Claude returned enough to build a description. */
 export const hasContent = (c?: DescriptionContent | null) => Boolean(c?.headline?.trim() && c.intro?.trim());
 
+/** "MotorSupply Co" with highlight "Supply" -> Motor + red "Supply" + Co, bold italic like the store banner. */
+export function wordmark(name: string, highlight: string, accent: string, size = 30, color = "#ffffff"): string {
+  const style = `font-family:'Arial Black',Arial,Helvetica,sans-serif;font-weight:900;font-style:italic;font-size:${size}px;line-height:1.1;letter-spacing:-0.5px;color:${color}`;
+  const h = cleanText(highlight);
+  const i = h ? name.toLowerCase().indexOf(h.toLowerCase()) : -1;
+  const inner =
+    i < 0
+      ? esc(name)
+      : `${esc(name.slice(0, i))}<span style="color:${accent}">${esc(name.slice(i, i + h.length))}</span>${esc(name.slice(i + h.length))}`;
+  return `<span style="${style}">${inner}</span>`;
+}
+
 export function renderAplus(input: AplusInput): string {
   const { content: c, brand: b } = input;
-  const accent = /^#[0-9a-f]{6}$/i.test(b.accentColor) ? b.accentColor : "#1e3a8a";
+  const hex = (v: string | undefined, d: string) => (/^#[0-9a-f]{6}$/i.test(v || "") ? v! : d);
+  const accent = hex(b.accentColor, "#e11d2a");
+  const dark = hex(b.darkColor, "#0b0f19");
   const brandName = cleanText(b.brandName) || input.storeName;
   const logo = httpsOnly(b.logoUrl);
   const pics = b.showPhotos ? input.pictures.map(httpsOnly).filter(Boolean) : [];
@@ -156,43 +171,71 @@ export function renderAplus(input: AplusInput): string {
   const pn = (input.specifics["Manufacturer Part Number"] ?? input.specifics["OE/OEM Part Number"] ?? [])[0];
   const highlights = (c.highlights ?? []).map(cleanText).filter(Boolean).slice(0, 8);
   const included = (c.included ?? []).map(cleanText).filter(Boolean).slice(0, 8);
+  const badges = (b.badges ?? []).map(cleanText).filter(Boolean).slice(0, 4);
+  const caps = (ls = 3) => `text-transform:uppercase;letter-spacing:${ls}px`;
 
   const h2 = (t: string) =>
-    `<h2 style="margin:0 0 12px;font-size:18px;color:${accent};border-bottom:2px solid ${accent};padding-bottom:6px">${esc(t)}</h2>`;
-  const section = (inner: string) => `<div style="margin:0 0 24px">${inner}</div>`;
+    `<h2 style="margin:0 0 14px;font-size:17px;font-weight:900;color:${dark};${caps(1.5)};border-left:5px solid ${accent};padding:2px 0 2px 10px">${esc(t)}</h2>`;
+  const section = (inner: string) => `<div style="margin:0 0 26px">${inner}</div>`;
+  const tick =
+    `<span style="display:inline-block;width:20px;height:20px;line-height:20px;border-radius:50%;background:${accent};color:#ffffff;` +
+    `text-align:center;font-size:12px;font-weight:bold;margin-right:8px;vertical-align:middle">&#10003;</span>`;
   const card = (title: string, body: string) =>
-    `<div style="flex:1 1 210px;min-width:0;border:1px solid #e5e7eb;border-top:3px solid ${accent};border-radius:6px;padding:12px 14px;background:#ffffff">` +
-    `<div style="font-weight:bold;color:${accent};margin-bottom:4px">${esc(title)}</div><div style="font-size:14px;color:#374151">${multiline(body)}</div></div>`;
+    `<div style="flex:1 1 210px;min-width:0;border:1px solid #e5e7eb;border-top:4px solid ${accent};border-radius:4px;padding:12px 14px;background:#ffffff">` +
+    `<div style="font-weight:900;color:${dark};margin-bottom:4px;${caps(1)};font-size:13px">${esc(title)}</div>` +
+    `<div style="font-size:14px;color:#374151">${multiline(body)}</div></div>`;
+  const td = "padding:8px 10px;border:1px solid #e5e7eb";
+  const tableHead = (cols: string[]) =>
+    `<tr style="background:${dark};color:#ffffff">` +
+    cols.map((x) => `<th style="padding:8px 10px;text-align:left;font-size:12px;${caps(1)};border-bottom:3px solid ${accent}">${esc(x)}</th>`).join("") +
+    `</tr>`;
 
   const out: string[] = [APLUS_MARKER];
   out.push(
-    `<div style="max-width:980px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#1f2937;background:#ffffff">`,
+    `<div style="max-width:980px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#1f2937;background:#ffffff;border:1px solid #e5e7eb">`,
   );
 
-  // header
+  // header: dark band with a red diagonal stripe; logo + wordmark + spaced tagline
   out.push(
-    `<div style="background:${accent};color:#ffffff;padding:16px 20px;border-radius:8px 8px 0 0">` +
-      (logo
-        ? `<img src="${esc(logo)}" alt="${esc(brandName)}" style="max-height:56px;max-width:260px;display:block">`
-        : `<div style="font-size:24px;font-weight:bold;letter-spacing:0.5px">${esc(brandName)}</div>`) +
-      (b.tagline.trim() ? `<div style="font-size:13px;opacity:0.9;margin-top:4px">${txt(b.tagline)}</div>` : "") +
-      `</div>`,
+    `<div style="background-color:${dark};background-image:linear-gradient(115deg,${dark} 0%,${dark} 72%,${accent} 72%,${accent} 75%,#1f2937 75%,#111827 100%);color:#ffffff;padding:20px 24px">` +
+      `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px">` +
+      (logo ? `<img src="${esc(logo)}" alt="${esc(brandName)}" style="height:64px;width:auto;max-width:180px;display:block;background:#ffffff;border-radius:6px;padding:4px">` : "") +
+      `<div style="min-width:0">${wordmark(brandName, b.brandHighlight, accent)}` +
+      (b.tagline.trim()
+        ? `<div style="margin-top:6px;font-size:11px;font-weight:bold;${caps()};color:#e5e7eb">` +
+          `<span style="display:inline-block;width:22px;height:2px;background:${accent};vertical-align:middle;margin-right:8px"></span>${txt(b.tagline)}</div>`
+        : "") +
+      `</div></div></div>`,
   );
 
-  out.push(`<div style="padding:20px;border:1px solid #e5e7eb;border-top:0;border-radius:0 0 8px 8px">`);
+  // trust badges strip
+  if (badges.length) {
+    out.push(
+      `<div style="display:flex;flex-wrap:wrap;background:#f3f4f6;border-bottom:1px solid #e5e7eb">` +
+        badges
+          .map(
+            (t, i) =>
+              `<div style="flex:1 1 150px;padding:12px 14px;font-size:12px;font-weight:900;color:${dark};${caps(1)};${i ? "border-left:1px solid #d1d5db" : ""}">${tick}${esc(t)}</div>`,
+          )
+          .join("") +
+        `</div>`,
+    );
+  }
+
+  out.push(`<div style="padding:22px">`);
 
   // hero
   out.push(
-    `<div style="display:flex;flex-wrap:wrap;gap:20px;margin:0 0 24px;align-items:flex-start">` +
+    `<div style="display:flex;flex-wrap:wrap;gap:22px;margin:0 0 26px;align-items:flex-start">` +
       (pics[0]
-        ? `<div style="flex:1 1 300px;min-width:0"><img src="${esc(pics[0])}" alt="${esc(input.title)}" style="width:100%;height:auto;border:1px solid #e5e7eb;border-radius:6px"></div>`
+        ? `<div style="flex:1 1 300px;min-width:0"><img src="${esc(pics[0])}" alt="${esc(input.title)}" style="width:100%;height:auto;border:1px solid #e5e7eb;border-radius:4px"></div>`
         : "") +
       `<div style="flex:1 1 320px;min-width:0">` +
-      `<h1 style="margin:0 0 10px;font-size:24px;line-height:1.25;color:#111827">${txt(c.headline)}</h1>` +
-      `<p style="margin:0 0 12px">${multiline(c.intro)}</p>` +
+      `<h1 style="margin:0 0 12px;font-size:26px;line-height:1.2;font-weight:900;color:${dark}">${txt(c.headline)}</h1>` +
+      `<p style="margin:0 0 14px">${multiline(c.intro)}</p>` +
       `<div style="display:flex;flex-wrap:wrap;gap:8px">` +
-      (pn ? `<span style="background:#f3f4f6;border-radius:4px;padding:4px 10px;font-size:13px"><b>Part #</b> ${txt(pn)}</span>` : "") +
-      (input.condition ? `<span style="background:#f3f4f6;border-radius:4px;padding:4px 10px;font-size:13px"><b>Condition</b> ${txt(input.condition)}</span>` : "") +
+      (pn ? `<span style="background:${dark};color:#ffffff;border-radius:3px;padding:5px 10px;font-size:13px"><b style="color:${accent}">PART #</b> ${txt(pn)}</span>` : "") +
+      (input.condition ? `<span style="background:#f3f4f6;border-radius:3px;padding:5px 10px;font-size:13px"><b>CONDITION</b> ${txt(input.condition)}</span>` : "") +
       `</div></div></div>`,
   );
 
@@ -202,10 +245,7 @@ export function renderAplus(input: AplusInput): string {
         h2("Why buy this part") +
           `<div style="display:flex;flex-wrap:wrap;gap:10px">` +
           highlights
-            .map(
-              (h) =>
-                `<div style="flex:1 1 260px;min-width:0;background:#f9fafb;border-radius:6px;padding:10px 12px"><span style="color:${accent};font-weight:bold">&#10003;</span> ${esc(h)}</div>`,
-            )
+            .map((h) => `<div style="flex:1 1 260px;min-width:0;background:#f9fafb;border-left:3px solid ${accent};padding:10px 12px">${tick}${esc(h)}</div>`)
             .join("") +
           `</div>`,
       ),
@@ -219,7 +259,7 @@ export function renderAplus(input: AplusInput): string {
           `<div style="display:flex;flex-wrap:wrap;gap:8px">` +
           pics
             .slice(1, 7)
-            .map((p) => `<div style="flex:1 1 140px;max-width:230px"><img src="${esc(p)}" alt="" style="width:100%;height:auto;border:1px solid #e5e7eb;border-radius:4px"></div>`)
+            .map((p) => `<div style="flex:1 1 140px;max-width:230px"><img src="${esc(p)}" alt="" style="width:100%;height:auto;border:1px solid #e5e7eb;border-radius:3px"></div>`)
             .join("") +
           `</div>`,
       ),
@@ -232,7 +272,7 @@ export function renderAplus(input: AplusInput): string {
       specs
         .map(
           ([k, v], i) =>
-            `<tr style="background:${i % 2 ? "#ffffff" : "#f9fafb"}"><td style="padding:7px 10px;border:1px solid #e5e7eb;width:42%;color:#6b7280">${txt(k)}</td><td style="padding:7px 10px;border:1px solid #e5e7eb;font-weight:bold">${txt(v)}</td></tr>`,
+            `<tr style="background:${i % 2 ? "#ffffff" : "#f9fafb"}"><td style="${td};width:42%;color:#6b7280">${txt(k)}</td><td style="${td};font-weight:bold;color:${dark}">${txt(v)}</td></tr>`,
         )
         .join("") +
       `</table></div>`
@@ -242,11 +282,11 @@ export function renderAplus(input: AplusInput): string {
       ? `<div style="flex:1 1 360px;min-width:0">${h2("Fitment")}` +
         (c.fitment_summary.trim() ? `<p style="margin:0 0 10px">${multiline(c.fitment_summary)}</p>` : "") +
         (shownGroups.length
-          ? `<table style="width:100%;border-collapse:collapse;font-size:14px"><tr style="background:${accent};color:#ffffff"><th style="padding:7px 10px;text-align:left">Vehicle</th><th style="padding:7px 10px;text-align:left">Years</th></tr>` +
+          ? `<table style="width:100%;border-collapse:collapse;font-size:14px">${tableHead(["Vehicle", "Years"])}` +
             shownGroups
               .map(
                 (g, i) =>
-                  `<tr style="background:${i % 2 ? "#ffffff" : "#f9fafb"}"><td style="padding:7px 10px;border:1px solid #e5e7eb">${txt(g.vehicle)}</td><td style="padding:7px 10px;border:1px solid #e5e7eb">${esc(g.years)}</td></tr>`,
+                  `<tr style="background:${i % 2 ? "#ffffff" : "#f9fafb"}"><td style="${td};font-weight:bold;color:${dark}">${txt(g.vehicle)}</td><td style="${td}">${esc(g.years)}</td></tr>`,
               )
               .join("") +
             `</table>` +
@@ -258,15 +298,10 @@ export function renderAplus(input: AplusInput): string {
           : "") +
         `</div>`
       : "";
-  if (specHtml || fitHtml) out.push(`<div style="display:flex;flex-wrap:wrap;gap:20px;margin:0 0 24px">${specHtml}${fitHtml}</div>`);
+  if (specHtml || fitHtml) out.push(`<div style="display:flex;flex-wrap:wrap;gap:22px;margin:0 0 26px">${specHtml}${fitHtml}</div>`);
 
   if (c.condition_notes.trim()) {
-    out.push(
-      section(
-        h2("Condition") +
-          `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:12px 14px">${multiline(c.condition_notes)}</div>`,
-      ),
-    );
+    out.push(section(h2("Condition") + `<div style="background:#fef2f2;border-left:4px solid ${accent};padding:12px 14px">${multiline(c.condition_notes)}</div>`));
   }
 
   if (included.length || c.install_tips.trim()) {
@@ -274,7 +309,7 @@ export function renderAplus(input: AplusInput): string {
       section(
         h2("What's included") +
           (included.length ? `<ul style="margin:0 0 10px;padding-left:20px">${included.map((i) => `<li style="margin:2px 0">${esc(i)}</li>`).join("")}</ul>` : "") +
-          (c.install_tips.trim() ? `<p style="margin:0;font-size:14px;color:#374151"><b>Tip:</b> ${txt(c.install_tips)}</p>` : ""),
+          (c.install_tips.trim() ? `<p style="margin:0;font-size:14px;color:#374151"><b style="color:${accent}">TIP:</b> ${txt(c.install_tips)}</p>` : ""),
       ),
     );
   }
@@ -290,17 +325,19 @@ export function renderAplus(input: AplusInput): string {
   }
 
   if (notes) {
-    out.push(
-      section(
-        h2("Seller notes") +
-          `<div style="font-size:14px;color:#374151">${NOTES_START}${esc(notes).replace(/\n/g, "<br>")}${NOTES_END}</div>`,
-      ),
-    );
+    out.push(section(h2("Seller notes") + `<div style="font-size:14px;color:#374151">${NOTES_START}${esc(notes).replace(/\n/g, "<br>")}${NOTES_END}</div>`));
   }
 
   out.push(`</div>`); // body
+
+  // footer: dark band, red rule, spaced "thank you" line + small wordmark
   out.push(
-    `<div style="text-align:center;font-size:13px;color:#6b7280;padding:14px 0">Thank you for shopping with <b style="color:${accent}">${esc(brandName)}</b></div>`,
+    `<div style="background:${dark};color:#ffffff;padding:16px 24px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px">` +
+      `<div style="font-size:12px;font-weight:bold;${caps()}">` +
+      `<span style="display:inline-block;width:34px;height:3px;background:${accent};vertical-align:middle;margin-right:10px"></span>` +
+      `${txt(b.footerText || `Thank you for shopping with ${brandName}`)}</div>` +
+      `<div>${wordmark(brandName, b.brandHighlight, accent, 18)}</div>` +
+      `</div>`,
   );
   out.push(`</div>`);
   return out.join("\n");

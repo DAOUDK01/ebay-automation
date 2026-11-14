@@ -58,9 +58,16 @@ export interface StoreSettings {
     description: {
       enabled: boolean;
       brandName: string;
+      /** part of the brand name shown in the accent colour, e.g. "Supply" */
+      brandHighlight: string;
       tagline: string;
       logoUrl: string;
       accentColor: string;
+      /** header/footer/table background */
+      darkColor: string;
+      /** up to 4 trust badges under the header */
+      badges: string[];
+      footerText: string;
       showPhotos: boolean;
       showCompatibility: boolean;
       keepOriginalNotes: boolean;
@@ -118,13 +125,17 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   },
 };
 
-function DEFAULT_DESCRIPTION(): StoreSettings["modules"]["description"] {
+export function DEFAULT_DESCRIPTION(): StoreSettings["modules"]["description"] {
   return {
     enabled: true,
-    brandName: "",
-    tagline: "Genuine used OEM auto parts - tested, inspected and carefully packed",
+    brandName: "MotorSupply Co",
+    brandHighlight: "Supply",
+    tagline: "Driving auto parts to you",
     logoUrl: "",
-    accentColor: "#1e3a8a",
+    accentColor: "#e11d2a",
+    darkColor: "#0b0f19",
+    badges: ["Quality parts", "Fast shipping", "Wide selection", "Global delivery"],
+    footerText: "Thank you for your business.",
     showPhotos: true,
     showCompatibility: true,
     keepOriginalNotes: true,
@@ -185,6 +196,20 @@ export function resolveSettings(saved: Partial<StoreSettings> | undefined): Stor
   const out: StoreSettings = merge(DEFAULT_SETTINGS, saved);
   // store format changed: titles now end "OEM Used" (was "Used OEM")
   out.modules.title.template = migrateTitleTemplate(out.modules.title.template);
+  // first A+ version defaulted to a generic blue look; untouched -> store branding
+  const d = out.modules.description;
+  if (d.accentColor.toLowerCase() === "#1e3a8a" && !d.brandName.trim()) {
+    const def = DEFAULT_DESCRIPTION();
+    Object.assign(d, {
+      brandName: def.brandName,
+      brandHighlight: def.brandHighlight,
+      tagline: def.tagline,
+      accentColor: def.accentColor,
+      darkColor: def.darkColor,
+      badges: def.badges,
+      footerText: def.footerText,
+    });
+  }
   return out;
 }
 
