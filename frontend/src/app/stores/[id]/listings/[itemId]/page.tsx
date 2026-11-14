@@ -107,6 +107,8 @@ function ListingPage() {
               storeId={id}
               item={data.item}
               aspects={data.aspects}
+              shippingPolicies={data.shippingPolicies}
+              shippingSettings={data.shippingSettings}
               onSaved={() => {
                 mutate();
                 history.mutate();

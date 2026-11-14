@@ -41,6 +41,17 @@ export interface StoreSettings {
       allowKnowledge: boolean;
       allowCustomNames: boolean;
     };
+    /** Shipping weight analysis. apply = switch listings to the suggested policy (else report only);
+     *  divisor = dimensional weight divisor (cm³/kg); minKg = smallest bracket used; useEstimates = let Claude
+     *  estimate packed weight/size when the listing has none */
+    shipping: {
+      enabled: boolean;
+      apply: boolean;
+      divisor: number;
+      minKg: number;
+      maxKg: number;
+      useEstimates: boolean;
+    };
     /** apply = push fitment to eBay (else report only); researchEbay = learn fitment from other listings of the
      *  same part number; allowKnowledge = let Claude add vehicles from its knowledge of the part number (verified
      *  against eBay's catalog); minListings = how many reference listings must agree on a vehicle */
@@ -84,6 +95,7 @@ export const DEFAULT_SETTINGS: StoreSettings = {
       minPrice: 0,
     },
     specifics: { enabled: true, overwriteExisting: false, useOtherListings: true, allowKnowledge: true, allowCustomNames: true },
+    shipping: { enabled: true, apply: false, divisor: 5000, minKg: 3, maxKg: 60, useEstimates: true },
     compatibility: { enabled: true, apply: false, researchEbay: true, allowKnowledge: true, minListings: 2, maxReferenceListings: 5 },
   },
 };

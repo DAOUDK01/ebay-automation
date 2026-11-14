@@ -2,7 +2,8 @@
 import { Code2, Eye, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, money } from "@/lib/api";
-import type { CategoryAspect, CompatRow, EbayItem } from "@/lib/types";
+import { computeWeights, kg, pickPolicy } from "@/lib/shipping";
+import type { CategoryAspect, CompatRow, EbayItem, PackageDetails, ShippingPolicy, StoreSettings } from "@/lib/types";
 import { toast } from "../toast";
 import { Alert, Badge, Button, Card, cx } from "../ui";
 import { CompatibilityTable } from "./CompatibilityTable";
@@ -40,14 +41,26 @@ export function ListingEditor({
   storeId,
   item,
   aspects,
+  shippingPolicies = [],
+  shippingSettings = { enabled: true, apply: false, divisor: 5000, minKg: 3, maxKg: 60, useEstimates: true },
   onSaved,
 }: {
   storeId: string;
   item: EbayItem;
   aspects: CategoryAspect[];
+  shippingPolicies?: ShippingPolicy[];
+  shippingSettings?: StoreSettings["modules"]["shipping"];
   onSaved: () => void;
 }) {
   const initialQty = Math.max(0, item.quantity - (item.quantitySold ?? 0));
+  const pkgToForm = (p?: PackageDetails) => ({
+    weightKg: p?.weightKg ? String(p.weightKg) : "",
+    lengthCm: p?.lengthCm ? String(p.lengthCm) : "",
+    widthCm: p?.widthCm ? String(p.widthCm) : "",
+    heightCm: p?.heightCm ? String(p.heightCm) : "",
+  });
+  const [policyId, setPolicyId] = useState(item.shipping?.policyId ?? "");
+  const [pkg, setPkg] = useState(() => pkgToForm(item.shipping?.package));
   const [title, setTitle] = useState(item.title);
   const [price, setPrice] = useState(String(item.price));
   const [qty, setQty] = useState(String(initialQty));
@@ -68,7 +81,21 @@ export function ListingEditor({
     setSpecs(toSpecRows(item.itemSpecifics ?? {}));
     setCompat(item.compatibilityAll ?? []);
     setDesc(item.descriptionHtml ?? "");
+    setPolicyId(item.shipping?.policyId ?? "");
+    setPkg(pkgToForm(item.shipping?.package));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item]);
+
+  // live shipping maths
+  const pkgNum: PackageDetails = {
+    weightKg: Number(pkg.weightKg) || 0,
+    lengthCm: Number(pkg.lengthCm) || 0,
+    widthCm: Number(pkg.widthCm) || 0,
+    heightCm: Number(pkg.heightCm) || 0,
+  };
+  const weights = computeWeights(pkgNum, shippingSettings.divisor, shippingSettings.minKg);
+  const suggestedPolicy = pkgNum.weightKg > 0 ? pickPolicy(shippingPolicies, weights.categoryKg) : null;
+  const origPkg = pkgToForm(item.shipping?.package);
 
   const original = useMemo(() => new Set((item.compatibilityAll ?? []).map(rowKey)), [item]);
   const added = useMemo(() => new Set(compat.map(rowKey).filter((k) => !original.has(k))), [compat, original]);
@@ -85,10 +112,24 @@ export function ListingEditor({
     itemSpecifics: normSpecs(specObj) !== normSpecs(item.itemSpecifics ?? {}),
     compatibility: added.size > 0 || removedCount > 0,
     description: desc !== (item.descriptionHtml ?? ""),
+    shippingPolicy: Boolean(policyId) && policyId !== (item.shipping?.policyId ?? ""),
+    packageDetails: JSON.stringify(pkg) !== JSON.stringify(origPkg) && pkgNum.weightKg > 0,
   };
   const changedLabels = Object.entries(dirty)
     .filter(([, v]) => v)
-    .map(([k]) => ({ title: "Title", price: "Price", quantity: "Quantity", itemSpecifics: "Item specifics", compatibility: "Compatibility", description: "Description" })[k]!);
+    .map(
+      ([k]) =>
+        ({
+          title: "Title",
+          price: "Price",
+          quantity: "Quantity",
+          itemSpecifics: "Item specifics",
+          compatibility: "Compatibility",
+          description: "Description",
+          shippingPolicy: "Shipping policy",
+          packageDetails: "Package weight & size",
+        })[k]!,
+    );
 
   const usedNames = new Set(specs.map((s) => s.name.trim().toLowerCase()));
   const missingRequired = aspects.filter((a) => (a.required || a.usage === "RECOMMENDED") && !usedNames.has(a.name.toLowerCase()));
@@ -136,6 +177,8 @@ export function ListingEditor({
     setSpecs(toSpecRows(item.itemSpecifics ?? {}));
     setCompat(item.compatibilityAll ?? []);
     setDesc(item.descriptionHtml ?? "");
+    setPolicyId(item.shipping?.policyId ?? "");
+    setPkg(pkgToForm(item.shipping?.package));
   }
 
   async function save() {
@@ -148,6 +191,8 @@ export function ListingEditor({
     if (dirty.itemSpecifics) body.itemSpecifics = specObj;
     if (dirty.compatibility) body.compatibility = compat;
     if (dirty.description) body.description = desc;
+    if (dirty.shippingPolicy) body.shippingPolicyId = policyId;
+    if (dirty.packageDetails) body.packageDetails = pkgNum;
     setSaving(true);
     try {
       const r = await api<{ changed: string[]; warnings: string[] }>(`/stores/${storeId}/listings/${item.itemId}`, { method: "PUT", body });
@@ -317,6 +362,93 @@ export function ListingEditor({
           Saving replaces the listing&apos;s whole compatibility list with this one. Use eBay&apos;s exact Make/Model/Trim/Engine spelling - eBay rejects vehicles it doesn&apos;t
           recognise.
         </p>
+      </Card>
+
+      <Card title="Shipping">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="space-y-4">
+            <div>
+              <label className="label">Package weight & box size (packed)</label>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {(
+                  [
+                    ["weightKg", "Weight", "kg"],
+                    ["lengthCm", "Length", "cm"],
+                    ["widthCm", "Width", "cm"],
+                    ["heightCm", "Height", "cm"],
+                  ] as const
+                ).map(([k, label, unit]) => (
+                  <div key={k} className="relative">
+                    <input
+                      className="input pr-9"
+                      type="number"
+                      min="0"
+                      step={k === "weightKg" ? "0.1" : "1"}
+                      placeholder={label}
+                      value={pkg[k]}
+                      onChange={(e) => setPkg((p) => ({ ...p, [k]: e.target.value }))}
+                    />
+                    <span className="pointer-events-none absolute right-2.5 top-2 text-xs text-slate-400">{unit}</span>
+                  </div>
+                ))}
+              </div>
+              {!item.shipping?.package && <p className="mt-1 text-xs text-slate-500">This listing has no package details on eBay yet.</p>}
+            </div>
+            <div>
+              <label className="label">Shipping policy</label>
+              <select className="input" value={policyId} onChange={(e) => setPolicyId(e.target.value)}>
+                {!policyId && <option value="">{item.shipping?.policy || "— none —"}</option>}
+                {policyId && !shippingPolicies.some((p) => p.id === policyId) && <option value={policyId}>{item.shipping?.policy || policyId}</option>}
+                {[...shippingPolicies]
+                  .sort((a, b) => (a.kg ?? 999) - (b.kg ?? 999) || a.name.localeCompare(b.name))
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="rounded-lg bg-slate-50 p-4 text-sm">
+            {pkgNum.weightKg > 0 ? (
+              <>
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                  <dt className="text-slate-500">Actual weight</dt>
+                  <dd className="text-right font-medium tabular-nums">{kg(weights.actualKg)}</dd>
+                  <dt className="text-slate-500">Dimensional (÷{shippingSettings.divisor})</dt>
+                  <dd className="text-right font-medium tabular-nums">{weights.dimensionalKg ? kg(weights.dimensionalKg) : "add box size"}</dd>
+                  <dt className="text-slate-500">Billable weight</dt>
+                  <dd className="text-right font-semibold tabular-nums">{kg(weights.billableKg)}</dd>
+                  <dt className="text-slate-500">Weight bracket (min {shippingSettings.minKg} kg)</dt>
+                  <dd className="text-right font-semibold tabular-nums text-brand-700">{weights.categoryKg} kg</dd>
+                </dl>
+                <div className="mt-3 border-t border-slate-200 pt-3">
+                  {weights.categoryKg > shippingSettings.maxKg ? (
+                    <p className="text-amber-700">Over your {shippingSettings.maxKg} kg maximum - consider freight.</p>
+                  ) : suggestedPolicy ? (
+                    suggestedPolicy.id === policyId ? (
+                      <p className="text-emerald-700">✓ The selected policy matches ({suggestedPolicy.name}).</p>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-amber-800">
+                          Suggested: <b>{suggestedPolicy.name}</b>
+                        </span>
+                        <Button size="sm" variant="secondary" onClick={() => setPolicyId(suggestedPolicy.id)}>
+                          Use suggested policy
+                        </Button>
+                      </div>
+                    )
+                  ) : (
+                    <p className="text-slate-500">No weight-based policy found for {weights.categoryKg} kg.</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="text-slate-500">Enter the packed weight (and box size) to calculate the dimensional and billable weight and the right policy.</p>
+            )}
+          </div>
+        </div>
       </Card>
 
       <Card

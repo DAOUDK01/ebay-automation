@@ -5,7 +5,8 @@ import { HttpError, parseBody } from "../middleware/error";
 import { Listing } from "../models/Listing";
 import { Proposal } from "../models/Proposal";
 import { computeManualChanges } from "../services/listingEdit";
-import { defaultDeps } from "../services/pipeline";
+import { resolveSettings } from "../models/Store";
+import { defaultDeps, getShippingPolicies } from "../services/pipeline";
 
 const router = Router({ mergeParams: true });
 
@@ -50,7 +51,13 @@ router.get("/:itemId/details", async (req, res) => {
   } catch {
     /* edit page still works without suggestions */
   }
-  res.json({ item, listing, aspects });
+  let shippingPolicies: Awaited<ReturnType<typeof getShippingPolicies>> = [];
+  try {
+    shippingPolicies = await getShippingPolicies(store, deps);
+  } catch {
+    /* policy picker just shows the current policy */
+  }
+  res.json({ item, listing, aspects, shippingPolicies, shippingSettings: resolveSettings(store.settings).modules.shipping });
 });
 
 const manualEditSchema = z.object({
@@ -70,6 +77,10 @@ const manualEditSchema = z.object({
       }),
     )
     .max(5000)
+    .optional(),
+  shippingPolicyId: z.string().max(40).optional(),
+  packageDetails: z
+    .object({ weightKg: z.number(), lengthCm: z.number(), widthCm: z.number(), heightCm: z.number() })
     .optional(),
 });
 

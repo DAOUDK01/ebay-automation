@@ -49,6 +49,16 @@ export const settingsSchema = z.object({
       allowKnowledge: z.boolean().default(true),
       allowCustomNames: z.boolean().default(true),
     }),
+    shipping: z
+      .object({
+        enabled: z.boolean(),
+        apply: z.boolean(),
+        divisor: z.number().min(1000).max(10000),
+        minKg: z.number().min(0).max(100),
+        maxKg: z.number().min(1).max(1000),
+        useEstimates: z.boolean(),
+      })
+      .default({ enabled: true, apply: false, divisor: 5000, minKg: 3, maxKg: 60, useEstimates: true }),
     compatibility: z.object({
       enabled: z.boolean(),
       apply: z.boolean(),

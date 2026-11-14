@@ -2,7 +2,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { env } from "../../config/env";
 import { logger, sleep } from "../logger";
-import type { ActiveListingSummary, CompatRow, EbayItem, ListingChanges, Specifics } from "./types";
+import type { ActiveListingSummary, CompatRow, EbayItem, ListingChanges, PackageDetails, Specifics } from "./types";
 
 const COMPAT_LEVEL = "1349";
 const ARRAY_TAGS = new Set([
@@ -63,6 +63,30 @@ export function parseCompatibility(it: any): CompatRow[] {
   return out;
 }
 
+/** <ShippingPackageDetails> -> kg / cm (eBay may store English lbs+oz / inches or Metric kg+g / cm). */
+export function parsePackage(pd: any): PackageDetails | undefined {
+  if (!pd) return undefined;
+  const unitOf = (el: any) => String((el && typeof el === "object" && el["@_unit"]) || "").toLowerCase();
+  const n = (el: any) => Number(txt(el)) || 0;
+  const metric = txt(pd.MeasurementUnit) === "Metric";
+  const toCm = (el: any) => {
+    const v = n(el);
+    const u = unitOf(el);
+    return u === "cm" || (!u && metric) ? v : u === "mm" ? v / 10 : v * 2.54; // default inches
+  };
+  const major = n(pd.WeightMajor);
+  const minor = n(pd.WeightMinor);
+  const mu = unitOf(pd.WeightMajor);
+  const weightKg = mu === "kg" || (!mu && metric) ? major + minor / 1000 : major * 0.45359237 + minor * 0.028349523;
+  const pkg = {
+    weightKg: Math.round(weightKg * 100) / 100,
+    lengthCm: Math.round(toCm(pd.PackageLength) * 10) / 10,
+    widthCm: Math.round(toCm(pd.PackageWidth) * 10) / 10,
+    heightCm: Math.round(toCm(pd.PackageDepth) * 10) / 10,
+  };
+  return pkg.weightKg || pkg.lengthCm || pkg.widthCm || pkg.heightCm ? pkg : undefined;
+}
+
 /** Pure function: Trading GetItem <Item> object -> normalized EbayItem. Exported for tests. */
 export function normalizeItem(itemId: string, it: any): EbayItem {
   const specifics: Specifics = {};
@@ -101,7 +125,9 @@ export function normalizeItem(itemId: string, it: any): EbayItem {
       })),
       dispatchDays: txt(it.DispatchTimeMax),
       policy: txt(it.SellerProfiles?.SellerShippingProfile?.ShippingProfileName),
+      policyId: txt(it.SellerProfiles?.SellerShippingProfile?.ShippingProfileID),
       location: txt(it.Location),
+      package: parsePackage(it.ShippingPackageDetails),
     },
     pictureCount: pics.length,
     imageUrl: txt(pics[0]),
@@ -136,6 +162,22 @@ export function buildReviseXml(itemId: string, changes: ListingChanges): string 
   if (changes.price) parts.push(`<StartPrice>${changes.price.toFixed(2)}</StartPrice>`);
   if (changes.quantity !== undefined) parts.push(`<Quantity>${Math.max(0, Math.floor(changes.quantity))}</Quantity>`);
   if (changes.description !== undefined) parts.push(`<Description>${cdata(changes.description)}</Description>`);
+  if (changes.shippingPolicyId) {
+    parts.push(
+      `<SellerProfiles><SellerShippingProfile><ShippingProfileID>${xmlEscape(changes.shippingPolicyId)}</ShippingProfileID></SellerShippingProfile></SellerProfiles>`,
+    );
+  }
+  if (changes.packageDetails) {
+    const p = changes.packageDetails;
+    const kg = Math.floor(p.weightKg);
+    const g = Math.round((p.weightKg - kg) * 1000);
+    parts.push(
+      `<ShippingPackageDetails><MeasurementUnit>Metric</MeasurementUnit>` +
+        `<PackageDepth unit="cm">${Math.ceil(p.heightCm)}</PackageDepth><PackageLength unit="cm">${Math.ceil(p.lengthCm)}</PackageLength>` +
+        `<PackageWidth unit="cm">${Math.ceil(p.widthCm)}</PackageWidth>` +
+        `<WeightMajor unit="kg">${kg}</WeightMajor><WeightMinor unit="gm">${g}</WeightMinor></ShippingPackageDetails>`,
+    );
+  }
   if (changes.itemSpecifics) {
     const nvs = Object.entries(changes.itemSpecifics)
       .map(([name, values]) => {
@@ -252,6 +294,17 @@ export class TradingClient {
     const it = (root.Item ?? [])[0];
     if (!it) throw new EbayApiError(`GetItem returned no item for ${itemId}`);
     return normalizeItem(itemId, it);
+  }
+
+  /** The seller's shipping (fulfillment) business policies. */
+  async getShippingPolicies(): Promise<{ id: string; name: string }[]> {
+    const root = await this.call("GetUserPreferences", "<ShowSellerProfilePreferences>true</ShowSellerProfilePreferences>");
+    const raw = root.SellerProfilePreferences?.SupportedSellerProfiles?.SupportedSellerProfile ?? [];
+    const list = Array.isArray(raw) ? raw : [raw];
+    return list
+      .filter((p: any) => txt(p.ProfileType) === "SHIPPING")
+      .map((p: any) => ({ id: txt(p.ProfileID), name: txt(p.ProfileName) }))
+      .filter((p) => p.id && p.name);
   }
 
   /** Compatibility table + item specifics of ANY public listing - used to learn fitment and specifics

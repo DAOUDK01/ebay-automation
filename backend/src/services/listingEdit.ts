@@ -1,5 +1,5 @@
 /** Manual edits from the listing page -> eBay revise. Only fields that actually changed are sent. */
-import type { CompatRow, EbayItem, ListingChanges, Specifics } from "../lib/ebay/types";
+import type { CompatRow, EbayItem, ListingChanges, PackageDetails, Specifics } from "../lib/ebay/types";
 
 export interface ManualEdit {
   title?: string;
@@ -9,6 +9,9 @@ export interface ManualEdit {
   description?: string;
   itemSpecifics?: Specifics;
   compatibility?: CompatRow[];
+  shippingPolicyId?: string;
+  /** package weight (kg) and box size (cm) */
+  packageDetails?: PackageDetails;
 }
 
 export const MAX_COMPAT_ROWS = 3000;
@@ -103,6 +106,26 @@ export function computeManualChanges(before: EbayItem, edit: ManualEdit): Listin
     if (rows.length > MAX_COMPAT_ROWS) throw new Error(`Too many compatibility rows (${rows.length}, max ${MAX_COMPAT_ROWS})`);
     const current = before.compatibilityAll ?? before.compatibilitySample ?? [];
     if (!sameCompat(rows, current)) changes.compatibilityReplace = rows;
+  }
+
+  if (edit.shippingPolicyId !== undefined && edit.shippingPolicyId && edit.shippingPolicyId !== before.shipping?.policyId) {
+    changes.shippingPolicyId = edit.shippingPolicyId;
+  }
+
+  if (edit.packageDetails !== undefined) {
+    const p = edit.packageDetails;
+    for (const [k, v] of Object.entries(p)) {
+      if (!(v >= 0) || v > 2000) throw new Error(`Invalid package ${k.replace(/Kg|Cm/, "")}: ${v}`);
+    }
+    if (!(p.weightKg > 0)) throw new Error("Package weight must be greater than 0");
+    const cur = before.shipping?.package;
+    const same =
+      cur &&
+      Math.abs(cur.weightKg - p.weightKg) < 0.01 &&
+      Math.ceil(cur.lengthCm) === Math.ceil(p.lengthCm) &&
+      Math.ceil(cur.widthCm) === Math.ceil(p.widthCm) &&
+      Math.ceil(cur.heightCm) === Math.ceil(p.heightCm);
+    if (!same) changes.packageDetails = p;
   }
 
   return changes;

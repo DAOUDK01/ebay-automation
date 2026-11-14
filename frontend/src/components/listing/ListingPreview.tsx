@@ -110,6 +110,13 @@ export function ListingPreview({ item, storeName }: { item: EbayItem; storeName:
                   {item.shipping?.policy ? ` · ${item.shipping.policy}` : ""}
                 </div>
                 {item.shipping?.dispatchDays && <div className="text-slate-600">Ships within {item.shipping.dispatchDays} business day(s)</div>}
+                {item.shipping?.package && (
+                  <div className="text-slate-600">
+                    Package: {item.shipping.package.weightKg} kg
+                    {item.shipping.package.lengthCm > 0 &&
+                      ` · ${item.shipping.package.lengthCm}×${item.shipping.package.widthCm}×${item.shipping.package.heightCm} cm`}
+                  </div>
+                )}
               </div>
             </div>
             {item.shipping?.location && (

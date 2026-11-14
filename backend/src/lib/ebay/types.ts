@@ -38,7 +38,11 @@ export interface EbayItem {
     options: { service: string; cost: string; free: boolean }[];
     dispatchDays: string;
     policy: string;
+    /** business shipping policy id */
+    policyId?: string;
     location: string;
+    /** package weight/size from the listing (converted to kg/cm), if the seller filled it in */
+    package?: PackageDetails;
   };
   pictureCount: number;
   imageUrl: string;
@@ -74,6 +78,40 @@ export interface Competitor {
   url: string;
 }
 
+export interface PackageDetails {
+  weightKg: number;
+  lengthCm: number;
+  widthCm: number;
+  heightCm: number;
+}
+
+export interface ShippingPolicy {
+  id: string;
+  name: string;
+  /** weight bracket parsed from the policy name, e.g. "Ground 7 KG" -> 7 */
+  kg: number | null;
+}
+
+export interface ShippingAnalysis {
+  /** where weight/size came from */
+  source: "listing" | "estimate" | "none";
+  confidence?: string;
+  basis?: string;
+  package?: PackageDetails;
+  actualKg: number;
+  dimensionalKg: number;
+  divisor: number;
+  billableKg: number;
+  /** weight bracket the item belongs in (min applied, rounded up) */
+  categoryKg: number;
+  overMax: boolean;
+  current: { id: string; name: string; kg: number | null } | null;
+  suggested: { id: string; name: string; kg: number | null } | null;
+  /** current policy is the right one */
+  matches: boolean;
+  note: string;
+}
+
 /** Where a fitment row came from */
 export type FitmentSource = "ebay_listings" | "listing_text" | "part_number_knowledge";
 
@@ -103,4 +141,8 @@ export interface ListingChanges {
   compatibilityAdd?: CompatRow[];
   /** manual edits only: the complete fitment list (replaces eBay's) */
   compatibilityReplace?: CompatRow[];
+  /** business shipping policy to switch the listing to */
+  shippingPolicyId?: string;
+  /** manual edits only: package weight/size (kg/cm) */
+  packageDetails?: PackageDetails;
 }

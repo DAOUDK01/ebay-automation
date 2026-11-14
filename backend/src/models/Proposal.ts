@@ -28,6 +28,8 @@ const proposalSchema = new Schema(
     notes: [String],
     competitorQuery: String,
     competitors: { type: Schema.Types.Mixed, default: [] },
+    /** shipping weight analysis (actual / dimensional / billable kg, current vs suggested policy) */
+    shipping: { type: Schema.Types.Mixed, default: null },
     /** fitment research: part numbers, reference listings used, rows dropped and why */
     fitment: { type: Schema.Types.Mixed, default: null },
     error: { type: String, default: "" },

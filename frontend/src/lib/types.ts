@@ -39,6 +39,14 @@ export interface StoreSettings {
       allowKnowledge: boolean;
       allowCustomNames: boolean;
     };
+    shipping: {
+      enabled: boolean;
+      apply: boolean;
+      divisor: number;
+      minKg: number;
+      maxKg: number;
+      useEstimates: boolean;
+    };
     compatibility: {
       enabled: boolean;
       apply: boolean;
@@ -127,6 +135,36 @@ export interface EbayItemSnapshot {
 
 export type CompatRow = { Year: string; Make: string; Model: string; Trim?: string; Engine?: string };
 
+export interface PackageDetails {
+  weightKg: number;
+  lengthCm: number;
+  widthCm: number;
+  heightCm: number;
+}
+
+export interface ShippingPolicy {
+  id: string;
+  name: string;
+  kg: number | null;
+}
+
+export interface ShippingAnalysis {
+  source: "listing" | "estimate" | "none";
+  confidence?: string;
+  basis?: string;
+  package?: PackageDetails;
+  actualKg: number;
+  dimensionalKg: number;
+  divisor: number;
+  billableKg: number;
+  categoryKg: number;
+  overMax: boolean;
+  current: ShippingPolicy | null;
+  suggested: ShippingPolicy | null;
+  matches: boolean;
+  note: string;
+}
+
 /** Full listing as returned live from eBay by GET /listings/:itemId/details */
 export interface EbayItem extends EbayItemSnapshot {
   subtitle: string;
@@ -146,7 +184,14 @@ export interface EbayItem extends EbayItemSnapshot {
   descriptionHtml?: string;
   descriptionText: string;
   site?: string;
-  shipping: { dispatchDays: string; policy: string; location: string; options: { service: string; cost: string; free: boolean }[] };
+  shipping: {
+    dispatchDays: string;
+    policy: string;
+    policyId?: string;
+    location: string;
+    package?: PackageDetails;
+    options: { service: string; cost: string; free: boolean }[];
+  };
 }
 
 export interface CategoryAspect {
@@ -162,6 +207,8 @@ export interface ListingDetails {
   item: EbayItem;
   listing: Listing;
   aspects: CategoryAspect[];
+  shippingPolicies: ShippingPolicy[];
+  shippingSettings: StoreSettings["modules"]["shipping"];
 }
 
 export interface FitmentRow {
@@ -203,9 +250,12 @@ export interface Proposal {
     price?: number;
     itemSpecifics?: Record<string, string[]>;
     compatibilityAdd?: Record<string, string>[];
+    shippingPolicyId?: string;
+    packageDetails?: PackageDetails;
   };
   notes: string[];
   fitment?: FitmentInfo | null;
+  shipping?: ShippingAnalysis | null;
   kind?: "optimizer" | "manual";
   competitors?: { title: string; price: number; shipping: number | null; condition: string; url: string; sellerFeedback: number | null }[];
   error?: string;

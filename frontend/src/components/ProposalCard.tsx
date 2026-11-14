@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, money } from "@/lib/api";
 import type { FitmentRow, Proposal } from "@/lib/types";
 import { FitmentPanel } from "./FitmentPanel";
+import { ShippingPanel } from "./ShippingPanel";
 import { toast } from "./toast";
 import { Badge, Button, StatusBadge, cx } from "./ui";
 
@@ -174,6 +175,12 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
               </Button>
             </div>
           )}
+        </div>
+      )}
+
+      {p.shipping && (
+        <div className="border-t border-slate-100 p-4">
+          <ShippingPanel s={p.shipping} switching={Boolean(p.changes.shippingPolicyId)} />
         </div>
       )}
 

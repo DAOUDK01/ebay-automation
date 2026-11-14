@@ -10,6 +10,7 @@ import { Proposal } from "../models/Proposal";
 import { resolveSettings, Store, type StoreDocument } from "../models/Store";
 import { currentMonth, Usage } from "../models/Usage";
 import { cancelPending, enqueue } from "../services/jobs";
+import { defaultDeps, getShippingPolicies } from "../services/pipeline";
 import { settingsSchema } from "./settingsSchema";
 
 const router = Router();
@@ -130,6 +131,17 @@ router.post("/:id/jobs/:jobId/cancel", async (req, res) => {
   );
   if (!job) throw new HttpError(404, "No active job with that id");
   res.json({ job });
+});
+
+/** The store's shipping policies with the weight bracket parsed from each name (Settings > Shipping). */
+router.get("/:id/shipping-policies", async (req, res) => {
+  const store = await loadStore(req);
+  try {
+    const policies = await getShippingPolicies(store, defaultDeps(store), req.query.refresh === "1");
+    res.json({ policies });
+  } catch (e: any) {
+    throw new HttpError(502, `Couldn't load shipping policies from eBay: ${e?.message ?? e}`);
+  }
 });
 
 router.get("/:id/jobs", async (req, res) => {

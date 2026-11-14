@@ -3,6 +3,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Aspect, Competitor, EbayItem } from "./ebay/types";
 import type { FitmentEvidence } from "./fitment";
+import type { ShippingEstimate } from "./shipping";
 
 /** Models that accept server-side refusal fallbacks ("default" routing). */
 const FALLBACK_MODELS = new Set(["claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5-1"]);
@@ -27,6 +28,7 @@ export interface ClaudeSuggestion {
     source: "listing_text" | "part_number_knowledge";
     confidence: "low" | "medium" | "high";
   }[];
+  shipping_estimate: ShippingEstimate;
   shipping_notes: string;
   other_notes: string;
   confidence: "low" | "medium" | "high";
@@ -98,8 +100,15 @@ Compatibility / fitment (vehicle parts only):
 - Every row is verified against eBay's vehicle catalog afterwards; use standard make/model names.
 - If nothing applies, return an empty list.
 
-Shipping: you cannot change shipping directly; give short advice in shipping_notes if the
-handling time or shipping cost looks uncompetitive versus competitors, else an empty string.
+Shipping:
+- shipping_estimate: estimate the PACKED shipment for this exact part as it would ship (part plus
+  box/padding): weight_kg and the box length_cm, width_cm, height_cm. Use the part type, size and
+  material (e.g. a car door shell or bumper ships in a large box; a sensor in a small one), and any
+  weight/size stated in the listing. If the listing's package details are given, they win - copy
+  them. basis = one short sentence on how you estimated; confidence honest. If you truly can't
+  tell, return zeros with confidence "low".
+- shipping_notes: short advice if handling time or shipping cost looks uncompetitive versus
+  competitors, else an empty string.
 
 Return JSON only, matching the schema.`;
 
@@ -141,13 +150,26 @@ export const SUGGESTION_SCHEMA = {
         additionalProperties: false,
       },
     },
+    shipping_estimate: {
+      type: "object",
+      properties: {
+        weight_kg: { type: "number" },
+        length_cm: { type: "number" },
+        width_cm: { type: "number" },
+        height_cm: { type: "number" },
+        basis: { type: "string" },
+        confidence: { type: "string", enum: ["low", "medium", "high"] },
+      },
+      required: ["weight_kg", "length_cm", "width_cm", "height_cm", "basis", "confidence"],
+      additionalProperties: false,
+    },
     shipping_notes: { type: "string" },
     other_notes: { type: "string" },
     confidence: { type: "string", enum: ["low", "medium", "high"] },
   },
   required: [
     "title", "title_reason", "item_specifics", "recommended_price", "price_reason",
-    "compatibility", "shipping_notes", "other_notes", "confidence",
+    "compatibility", "shipping_estimate", "shipping_notes", "other_notes", "confidence",
   ],
   additionalProperties: false,
 } as const;

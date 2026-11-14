@@ -5,8 +5,9 @@ import { suggestImprovements, type ClaudeSuggestion } from "../lib/claude";
 import { userAccessToken } from "../lib/ebay/auth";
 import { RestClient } from "../lib/ebay/rest";
 import { TradingClient } from "../lib/ebay/trading";
-import type { EbayItem, FitmentRow, ListingChanges } from "../lib/ebay/types";
+import type { EbayItem, FitmentRow, ListingChanges, ShippingAnalysis, ShippingPolicy } from "../lib/ebay/types";
 import { buildFitmentRows, gatherFitmentEvidence, type FitmentDeps } from "../lib/fitment";
+import { analyzeShipping, withKg } from "../lib/shipping";
 import { checkCompatibility, checkPrice, checkSpecifics, checkTitle } from "../lib/guardrails";
 import { logger, sleep } from "../lib/logger";
 import { Batch } from "../models/Batch";
@@ -17,7 +18,7 @@ import { addUsage, monthSpend } from "../models/Usage";
 
 export interface PipelineDeps {
   trading: Pick<TradingClient, "allActiveListings" | "getItem" | "reviseItem"> &
-    Partial<Pick<TradingClient, "getItemCompatibility">>;
+    Partial<Pick<TradingClient, "getItemCompatibility" | "getShippingPolicies">>;
   rest: Pick<RestClient, "aspectsForCategory" | "competitorsFor"> &
     Partial<Pick<RestClient, "searchByPartNumber" | "validateVehicle">>;
   suggest: typeof suggestImprovements;
@@ -39,6 +40,20 @@ export class BudgetExceeded extends Error {}
 
 /** A listing that failed is picked again automatically after this many hours. */
 export const ERROR_RETRY_HOURS = 24;
+
+// ---------------------------------------------------------------- shipping policies (cached per store)
+const policyCache = new Map<string, { at: number; list: ShippingPolicy[] }>();
+const POLICY_TTL = 30 * 60_000;
+
+export async function getShippingPolicies(store: StoreDocument, deps: PipelineDeps, fresh = false): Promise<ShippingPolicy[]> {
+  const key = String(store._id);
+  const c = policyCache.get(key);
+  if (!fresh && c && Date.now() - c.at < POLICY_TTL) return c.list;
+  if (!deps.trading.getShippingPolicies) return [];
+  const list = withKg(await deps.trading.getShippingPolicies());
+  policyCache.set(key, { at: Date.now(), list });
+  return list;
+}
 
 // ---------------------------------------------------------------- sync
 export async function syncListings(store: StoreDocument, deps: PipelineDeps): Promise<number> {
@@ -83,6 +98,7 @@ export function buildChanges(
   s: StoreSettings,
   fitmentRows: FitmentRow[] = [],
   specificsEvidenceNames: string[] = [],
+  shipping: ShippingAnalysis | null = null,
 ): { changes: ListingChanges; notes: string[]; suggestedCompat: FitmentRow[] } {
   const changes: ListingChanges = {};
   const notes: string[] = [];
@@ -100,6 +116,14 @@ export function buildChanges(
   const c = checkCompatibility(fitmentRows, s.modules.compatibility);
   if (c.note) notes.push(c.note);
   if (c.value) changes.compatibilityAdd = c.value;
+  if (shipping && s.modules.shipping.enabled) {
+    notes.push(`shipping: ${shipping.note}`);
+    // switch policy only when we're confident which bracket is right
+    const confident = shipping.source === "listing" || shipping.confidence !== "low";
+    if (s.modules.shipping.apply && shipping.suggested && !shipping.matches && !shipping.overMax && confident && shipping.suggested.id) {
+      changes.shippingPolicyId = shipping.suggested.id;
+    }
+  }
   return { changes, notes, suggestedCompat: c.suggested };
 }
 
@@ -155,6 +179,18 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
   await addUsage(store._id, result.costUsd, result.inputTokens, result.outputTokens);
 
   const fit = await buildFitmentRows(item, evidence, result.suggestion.compatibility, fitDeps, s);
+
+  let shipping: ShippingAnalysis | null = null;
+  if (s.modules.shipping.enabled) {
+    let policies: ShippingPolicy[] = [];
+    try {
+      policies = await getShippingPolicies(store, deps);
+    } catch (e: any) {
+      logger.warn(`[${store.name}] couldn't load shipping policies: ${e?.message ?? e}`);
+    }
+    shipping = analyzeShipping(item, result.suggestion.shipping_estimate, policies, s.modules.shipping);
+  }
+
   const listing = await Listing.findOne({ storeId: store._id, itemId }).lean();
   const { changes, notes, suggestedCompat } = buildChanges(
     item,
@@ -164,6 +200,7 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
     s,
     fit.rows,
     evidence.specifics.map((e) => e.name),
+    shipping,
   );
   const status = Object.keys(changes).length ? "proposed" : "no_change";
   const withFitment = evidence.references.filter((r) => r.rowCount > 0).length;
@@ -174,6 +211,7 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
     ...base,
     status,
     suggestion: { ...result.suggestion, suggested_compatibility_rows: suggestedCompat },
+    shipping,
     fitment: {
       partNumbers: evidence.partNumbers,
       references: evidence.references,
@@ -373,6 +411,8 @@ export async function revertProposal(store: StoreDocument, deps: PipelineDeps, p
   if (changes.description !== undefined && before.descriptionHtml !== undefined) revert.description = before.descriptionHtml;
   // a manual fitment edit replaced the whole list -> put the old list back (only possible if we saved it)
   if (changes.compatibilityReplace && before.compatibilityAll) revert.compatibilityReplace = before.compatibilityAll;
+  if (changes.shippingPolicyId && before.shipping?.policyId) revert.shippingPolicyId = before.shipping.policyId;
+  if (changes.packageDetails && before.shipping?.package) revert.packageDetails = before.shipping.package;
   if (!Object.keys(revert).length) throw new Error("Nothing to revert (compatibility-only change)");
   await deps.trading.reviseItem(p.itemId, revert, before?.site);
   p.status = "reverted";

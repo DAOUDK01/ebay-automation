@@ -1,11 +1,12 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
+import useSWR from "swr";
 import { useStore } from "@/components/StoreContext";
 import { toast } from "@/components/toast";
 import { Alert, Button, Card, Toggle } from "@/components/ui";
-import { api } from "@/lib/api";
-import type { StoreSettings } from "@/lib/types";
+import { api, fetcher } from "@/lib/api";
+import type { ShippingPolicy, StoreSettings } from "@/lib/types";
 
 const MODELS = [
   { id: "claude-opus-5-5", label: "Claude Opus 5.5 (best quality)", inp: 4, out: 20 },
@@ -25,6 +26,52 @@ function Field({ label, hint, children }: { label: string; hint?: ReactNode; chi
 
 function Num({ value, onChange, step = 1, min = 0 }: { value: number; onChange: (n: number) => void; step?: number; min?: number }) {
   return <input className="input" type="number" step={step} min={min} value={value} onChange={(e) => onChange(Number(e.target.value))} />;
+}
+
+/** The store's shipping policies as read from eBay, with the kg bracket parsed from each name. */
+function PolicyList({ storeId }: { storeId: string }) {
+  const { data, error, isLoading, mutate } = useSWR<{ policies: ShippingPolicy[] }>(`/stores/${storeId}/shipping-policies`, fetcher, {
+    revalidateOnFocus: false,
+  });
+  const brackets = (data?.policies ?? []).filter((p) => p.kg !== null).sort((a, b) => a.kg! - b.kg!);
+  const other = (data?.policies ?? []).filter((p) => p.kg === null);
+  return (
+    <div className="ml-11 rounded-lg border border-slate-200 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Your shipping policies on eBay</span>
+        <button
+          className="text-xs font-medium text-brand-600 hover:underline"
+          onClick={async () => mutate(await api(`/stores/${storeId}/shipping-policies?refresh=1`), { revalidate: false })}
+        >
+          Refresh
+        </button>
+      </div>
+      {isLoading ? (
+        <p className="text-sm text-slate-400">Loading from eBay…</p>
+      ) : error ? (
+        <p className="text-sm text-rose-600">{error.message}</p>
+      ) : (
+        <>
+          {brackets.length ? (
+            <div className="flex flex-wrap gap-1.5">
+              {brackets.map((p) => (
+                <span key={p.id} className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs" title={p.name}>
+                  <b className="tabular-nums">{p.kg} kg</b> <span className="text-slate-500">· {p.name}</span>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-amber-700">No weight-based policies found. Policy names must include the weight, e.g. &quot;Ground 7 KG&quot;.</p>
+          )}
+          {other.length > 0 && (
+            <p className="mt-2 text-xs text-slate-500">
+              Ignored (no kg in the name): {other.map((p) => p.name).join(", ")}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 export default function SettingsPage() {
@@ -337,6 +384,47 @@ export default function SettingsPage() {
               )}
             </div>
           </div>
+        </div>
+      </Card>
+
+      <Card title="Shipping weight & policies">
+        <div className="space-y-4">
+          <Toggle
+            checked={s.modules.shipping.enabled}
+            onChange={(v) => up("modules.shipping.enabled", v)}
+            label={<b>Analyse shipping weight for every listing</b>}
+          />
+          <p className="ml-11 -mt-2 text-xs text-slate-500">
+            Billable weight = the larger of actual weight and dimensional weight (L × W × H in cm ÷ divisor), rounded up to the next kg, never
+            below the minimum. The suggested policy is the smallest weight bracket that covers it.
+          </p>
+          <div className="ml-11 grid max-w-3xl gap-4 sm:grid-cols-3">
+            <Field label="Dimensional divisor" hint="5000 is standard (UPS/FedEx/DHL); some use 6000.">
+              <Num value={s.modules.shipping.divisor} step={500} min={1000} onChange={(v) => up("modules.shipping.divisor", v)} />
+            </Field>
+            <Field label="Minimum bracket (kg)" hint="Lighter items go in this policy.">
+              <Num value={s.modules.shipping.minKg} step={1} onChange={(v) => up("modules.shipping.minKg", v)} />
+            </Field>
+            <Field label="Maximum bracket (kg)" hint="Heavier items are flagged for freight.">
+              <Num value={s.modules.shipping.maxKg} step={1} min={1} onChange={(v) => up("modules.shipping.maxKg", v)} />
+            </Field>
+          </div>
+          <div className="ml-11 space-y-3">
+            <Toggle
+              checked={s.modules.shipping.useEstimates}
+              disabled={!s.modules.shipping.enabled}
+              onChange={(v) => up("modules.shipping.useEstimates", v)}
+              label="When a listing has no package weight/size, let Claude estimate the packed weight and box size"
+            />
+            <Toggle
+              checked={s.modules.shipping.apply}
+              disabled={!s.modules.shipping.enabled}
+              onChange={(v) => up("modules.shipping.apply", v)}
+              label={<b>Switch listings to the suggested shipping policy (off = show it in the review screen only)</b>}
+            />
+            <p className="text-xs text-slate-500">Low-confidence estimates are never applied automatically.</p>
+          </div>
+          <PolicyList storeId={store.id} />
         </div>
       </Card>
 
