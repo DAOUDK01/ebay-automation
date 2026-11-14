@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkCompatibility, checkPrice, checkSpecifics, checkTitle, inActiveHours, priceFloor } from "../src/lib/guardrails";
+import {
+  checkCompatibility,
+  checkPrice,
+  checkSpecifics,
+  checkTitle,
+  inActiveHours,
+  priceFloor,
+  templateLiterals,
+} from "../src/lib/guardrails";
 import { buildReviseXml, normalizeItem } from "../src/lib/ebay/trading";
 import { DEFAULT_SETTINGS, resolveSettings } from "../src/models/Store";
 import { XMLParser } from "fast-xml-parser";
@@ -20,6 +28,23 @@ test("title: rejects >80 chars, spam, and big shortening", () => {
   assert.equal(checkTitle("A fairly long existing listing title with details", "Short").value, null);
   assert.equal(checkTitle("Same", " Same ").value, null);
   assert.equal(checkTitle("Brake pads", "Acme Front Ceramic Brake Pads").value, "Acme Front Ceramic Brake Pads");
+});
+
+test("title format: fixed text outside {…} is required", () => {
+  const tpl = "{Year range} {Brand} {Model} {Part name and location} {Part number} Used OEM";
+  assert.deepEqual(templateLiterals(tpl), ["Used OEM"]);
+  assert.deepEqual(templateLiterals(""), []);
+  assert.deepEqual(templateLiterals("Genuine {Brand} {Part} - Free Returns"), ["Genuine", "- Free Returns"]);
+  const old = "Honda Civic front left headlight assembly 33150-TBA-A01 used";
+  const ok = checkTitle(old, "2016-2018 Honda Civic Headlight Front Left 33150-TBA-A01 Used OEM", tpl);
+  assert.equal(ok.value, "2016-2018 Honda Civic Headlight Front Left 33150-TBA-A01 Used OEM");
+  const missing = checkTitle(old, "2016-2018 Honda Civic Headlight Front Left 33150-TBA-A01 OEM Part", tpl);
+  assert.equal(missing.value, null);
+  assert.match(missing.note, /missing required text "Used OEM"/);
+  // case-insensitive match is accepted
+  assert.ok(checkTitle(old, "2016-2018 Honda Civic Headlight Front Left 33150-TBA-A01 used oem", tpl).value);
+  // no template -> no requirement
+  assert.ok(checkTitle(old, "2016-2018 Honda Civic Headlight Front Left 33150-TBA-A01 OEM Part").value);
 });
 
 test("price: capped, needs cost to decrease, respects floor", () => {
@@ -54,18 +79,21 @@ test("specifics: only valid aspects, allowed values, no overwrite by default", (
   assert.deepEqual(ow.value?.Brand, ["Bosch"]);
 });
 
-test("compatibility: report-only by default, validates years, dedupes existing", () => {
+test("compatibility: report-only by default; push strips internal fields", () => {
   const rows = [
-    { year: "2016", make: "Honda", model: "Civic", trim: "", engine: "" },
-    { year: "2017", make: "Honda", model: "Civic", trim: "", engine: "" },
-    { year: "16", make: "Honda", model: "Civic", trim: "", engine: "" },
+    { Year: "2017", Make: "Honda", Model: "Civic", Trim: "EX", Engine: "2.0L", _source: "ebay_listings" as const, _support: "3" },
+    { Year: "2018", Make: "Honda", Model: "Civic", _source: "part_number_knowledge" as const, _support: "" },
   ];
-  const item = { compatibilitySample: [{ Year: "2016", Make: "Honda", Model: "Civic" }] };
-  const r = checkCompatibility(item, rows, DEFAULT_SETTINGS.modules.compatibility);
+  const r = checkCompatibility(rows, DEFAULT_SETTINGS.modules.compatibility);
   assert.equal(r.value, null);
-  assert.equal(r.suggested.length, 1);
-  const applied = checkCompatibility(item, rows, { enabled: true, apply: true });
-  assert.deepEqual(applied.value, [{ Year: "2017", Make: "Honda", Model: "Civic" }]);
+  assert.equal(r.suggested.length, 2);
+  assert.match(r.note, /1 from other eBay listings, 1 from part-number knowledge\) - report only/);
+  const applied = checkCompatibility(rows, { ...DEFAULT_SETTINGS.modules.compatibility, apply: true });
+  assert.deepEqual(applied.value, [
+    { Year: "2017", Make: "Honda", Model: "Civic", Trim: "EX", Engine: "2.0L" },
+    { Year: "2018", Make: "Honda", Model: "Civic" },
+  ]);
+  assert.equal(checkCompatibility(rows, { ...DEFAULT_SETTINGS.modules.compatibility, enabled: false }).suggested.length, 0);
 });
 
 test("active hours incl. windows crossing midnight", () => {

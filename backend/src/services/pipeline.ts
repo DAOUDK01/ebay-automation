@@ -5,7 +5,8 @@ import { suggestImprovements, type ClaudeSuggestion } from "../lib/claude";
 import { userAccessToken } from "../lib/ebay/auth";
 import { RestClient } from "../lib/ebay/rest";
 import { TradingClient } from "../lib/ebay/trading";
-import type { EbayItem, ListingChanges } from "../lib/ebay/types";
+import type { EbayItem, FitmentRow, ListingChanges } from "../lib/ebay/types";
+import { buildFitmentRows, gatherFitmentEvidence, type FitmentDeps } from "../lib/fitment";
 import { checkCompatibility, checkPrice, checkSpecifics, checkTitle } from "../lib/guardrails";
 import { logger, sleep } from "../lib/logger";
 import { Batch } from "../models/Batch";
@@ -15,8 +16,10 @@ import { resolveSettings, Store, type StoreDocument, type StoreSettings } from "
 import { addUsage, monthSpend } from "../models/Usage";
 
 export interface PipelineDeps {
-  trading: Pick<TradingClient, "allActiveListings" | "getItem" | "reviseItem">;
-  rest: Pick<RestClient, "aspectsForCategory" | "competitorsFor">;
+  trading: Pick<TradingClient, "allActiveListings" | "getItem" | "reviseItem"> &
+    Partial<Pick<TradingClient, "getItemCompatibility">>;
+  rest: Pick<RestClient, "aspectsForCategory" | "competitorsFor"> &
+    Partial<Pick<RestClient, "searchByPartNumber" | "validateVehicle">>;
   suggest: typeof suggestImprovements;
   /** injectable for tests */
   sleep: (ms: number) => Promise<void>;
@@ -78,11 +81,12 @@ export function buildChanges(
   aspects: Parameters<typeof checkSpecifics>[2],
   cost: number | null,
   s: StoreSettings,
-): { changes: ListingChanges; notes: string[]; suggestedCompat: Record<string, string>[] } {
+  fitmentRows: FitmentRow[] = [],
+): { changes: ListingChanges; notes: string[]; suggestedCompat: FitmentRow[] } {
   const changes: ListingChanges = {};
   const notes: string[] = [];
   if (s.modules.title.enabled) {
-    const t = checkTitle(item.title, suggestion.title);
+    const t = checkTitle(item.title, suggestion.title, s.modules.title.template);
     notes.push(t.note);
     if (t.value) changes.title = t.value;
   }
@@ -92,7 +96,7 @@ export function buildChanges(
   const sp = checkSpecifics(item, suggestion.item_specifics, aspects, s.modules.specifics);
   notes.push(...sp.notes);
   if (sp.value) changes.itemSpecifics = sp.value;
-  const c = checkCompatibility(item, suggestion.compatibility, s.modules.compatibility);
+  const c = checkCompatibility(fitmentRows, s.modules.compatibility);
   if (c.note) notes.push(c.note);
   if (c.value) changes.compatibilityAdd = c.value;
   return { changes, notes, suggestedCompat: c.suggested };
@@ -118,24 +122,54 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
     logger.warn(`[${store.name}] ${itemId}: ${aspectNote}`);
   }
   const { query, competitors } = await deps.rest.competitorsFor(item, s.excludeSeller, s.competitorCount);
+
+  // fitment research: other eBay listings with the same part number -> their compatibility tables
+  const fitDeps: FitmentDeps = {
+    searchByPartNumber: deps.rest.searchByPartNumber?.bind(deps.rest),
+    getItemCompatibility: deps.trading.getItemCompatibility?.bind(deps.trading),
+    validateVehicle: deps.rest.validateVehicle?.bind(deps.rest),
+  };
+  const evidence = await gatherFitmentEvidence(item, fitDeps, s, (m) => logger.warn(`[${store.name}] ${itemId}: ${m}`));
+
   let result;
   try {
-    result = await deps.suggest(item, aspects, competitors, s.claude);
+    result = await deps.suggest(
+      item,
+      aspects,
+      competitors,
+      { ...s.claude, titleTemplate: s.modules.title.enabled ? s.modules.title.template : "" },
+      { partNumbers: evidence.partNumbers, summary: evidence.summary, referenceCount: evidence.references.length },
+    );
   } catch (e: any) {
     if (e?.costUsd) await addUsage(store._id, e.costUsd, 0, 0);
     throw e;
   }
   await addUsage(store._id, result.costUsd, result.inputTokens, result.outputTokens);
 
+  const fit = await buildFitmentRows(item, evidence, result.suggestion.compatibility, fitDeps, s);
   const listing = await Listing.findOne({ storeId: store._id, itemId }).lean();
-  const { changes, notes, suggestedCompat } = buildChanges(item, result.suggestion, aspects, listing?.cost ?? null, s);
+  const { changes, notes, suggestedCompat } = buildChanges(item, result.suggestion, aspects, listing?.cost ?? null, s, fit.rows);
   const status = Object.keys(changes).length ? "proposed" : "no_change";
+  const fitNote = evidence.partNumbers.length
+    ? `fitment research: part number(s) ${evidence.partNumbers.join(", ")} - ${evidence.references.length} other eBay listing(s) with fitment found`
+    : "fitment research: no part number found in title/specifics";
   await Proposal.create({
     ...base,
     status,
     suggestion: { ...result.suggestion, suggested_compatibility_rows: suggestedCompat },
+    fitment: {
+      partNumbers: evidence.partNumbers,
+      references: evidence.references,
+      dropped: fit.dropped.slice(0, 50),
+      existingCount: (item.compatibilityAll ?? item.compatibilitySample).length,
+    },
     changes,
-    notes: [`competitor query: "${query}" (${competitors.length} found)`, ...(aspectNote ? [aspectNote] : []), ...notes],
+    notes: [
+      `competitor query: "${query}" (${competitors.length} found)`,
+      ...(aspectNote ? [aspectNote] : []),
+      ...(s.modules.compatibility.enabled ? [fitNote] : []),
+      ...notes,
+    ],
     competitorQuery: query,
     competitors,
     costUsd: result.costUsd,
@@ -247,15 +281,25 @@ export async function pushProposals(
   statuses: ProposalStatus[] = ["approved"],
 ) {
   const s = resolveSettings(store.settings);
-  await Batch.updateOne({ _id: batchId }, { $set: { status: "pushing" } });
   const rows = await Proposal.find({ batchId, storeId: store._id, status: { $in: statuses } }).sort({ _id: 1 });
+  await Batch.updateOne(
+    { _id: batchId },
+    {
+      $set: {
+        status: "pushing",
+        push: { total: rows.length, done: 0, failed: 0, currentItemId: "", startedAt: new Date(), finishedAt: null },
+      },
+    },
+  );
   for (const p of rows) {
     const changes = (p.changes ?? {}) as ListingChanges;
     if (!Object.keys(changes).length) {
       p.status = "no_change";
       await p.save();
+      await Batch.updateOne({ _id: batchId }, { $inc: { "push.done": 1 } });
       continue;
     }
+    await Batch.updateOne({ _id: batchId }, { $set: { "push.currentItemId": p.itemId } });
     try {
       const warnings = await deps.trading.reviseItem(p.itemId, changes, (p.before as EbayItem | undefined)?.site);
       p.status = "pushed";
@@ -273,11 +317,26 @@ export async function pushProposals(
       logger.error(`[${store.name}] push failed ${p.itemId}: ${p.error}`);
     }
     await p.save();
+    await Batch.updateOne(
+      { _id: batchId },
+      { $inc: { "push.done": 1, "push.failed": p.status === "failed" ? 1 : 0 } },
+    );
+    await recountBatch(batchId);
     await deps.sleep(s.gapBetweenPushesSec * 1000);
   }
   await recountBatch(batchId);
   const pending = await Proposal.countDocuments({ batchId, status: { $in: ["proposed", "approved"] } });
-  await Batch.updateOne({ _id: batchId }, { $set: { status: pending ? "review" : "done", finishedAt: new Date() } });
+  await Batch.updateOne(
+    { _id: batchId },
+    {
+      $set: {
+        status: pending ? "review" : "done",
+        finishedAt: new Date(),
+        "push.currentItemId": "",
+        "push.finishedAt": new Date(),
+      },
+    },
+  );
 }
 
 /** Restores title / price / item specifics from the snapshot taken before the change.

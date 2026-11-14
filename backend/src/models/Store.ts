@@ -20,7 +20,9 @@ export interface StoreSettings {
     outputPricePerMtok: number;
   };
   modules: {
-    title: { enabled: boolean };
+    /** template: the store's title format, e.g. "{Year range} {Brand} {Model} {Part name and location} {Part number} Used OEM".
+     *  {…} parts are filled in by Claude in that order; text outside {…} must appear in every title. "" = no fixed format. */
+    title: { enabled: boolean; template: string };
     pricing: {
       enabled: boolean;
       maxChangePct: number;
@@ -30,7 +32,17 @@ export interface StoreSettings {
       minPrice: number;
     };
     specifics: { enabled: boolean; overwriteExisting: boolean };
-    compatibility: { enabled: boolean; apply: boolean };
+    /** apply = push fitment to eBay (else report only); researchEbay = learn fitment from other listings of the
+     *  same part number; allowKnowledge = let Claude add vehicles from its knowledge of the part number (verified
+     *  against eBay's catalog); minListings = how many reference listings must agree on a vehicle */
+    compatibility: {
+      enabled: boolean;
+      apply: boolean;
+      researchEbay: boolean;
+      allowKnowledge: boolean;
+      minListings: number;
+      maxReferenceListings: number;
+    };
   };
 }
 
@@ -53,7 +65,7 @@ export const DEFAULT_SETTINGS: StoreSettings = {
     outputPricePerMtok: 20,
   },
   modules: {
-    title: { enabled: true },
+    title: { enabled: true, template: "" },
     pricing: {
       enabled: true,
       maxChangePct: 5,
@@ -63,7 +75,7 @@ export const DEFAULT_SETTINGS: StoreSettings = {
       minPrice: 0,
     },
     specifics: { enabled: true, overwriteExisting: false },
-    compatibility: { enabled: true, apply: false },
+    compatibility: { enabled: true, apply: false, researchEbay: true, allowKnowledge: true, minListings: 2, maxReferenceListings: 5 },
   },
 };
 

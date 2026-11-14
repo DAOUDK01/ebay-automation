@@ -50,6 +50,8 @@ batchesRouter.post("/:batchId/push", async (req, res) => {
   const approved = await Proposal.countDocuments({ batchId: batch._id, status: "approved" });
   if (!approved) throw new HttpError(400, "No approved changes to push - approve some first");
   batch.status = "pushing";
+  // reset live progress; the worker fills it in as it goes ("waiting for worker" until startedAt is set)
+  batch.set("push", { total: approved, done: 0, failed: 0, currentItemId: "", startedAt: null, finishedAt: null });
   await batch.save();
   const { job } = await enqueue(store._id, "push", { batchId: String(batch._id) });
   res.status(202).json({ job, approved });

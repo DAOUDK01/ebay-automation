@@ -32,6 +32,8 @@ export interface EbayItem {
   itemSpecifics: Specifics;
   compatibilityCount: number;
   compatibilitySample: CompatRow[];
+  /** full existing fitment (not sent to Claude; used to avoid adding duplicates) */
+  compatibilityAll?: CompatRow[];
   shipping: {
     options: { service: string; cost: string; free: boolean }[];
     dispatchDays: string;
@@ -65,6 +67,23 @@ export interface Competitor {
   sellerPositivePct: string | null;
   topRated: boolean;
   url: string;
+}
+
+/** Where a fitment row came from */
+export type FitmentSource = "ebay_listings" | "listing_text" | "part_number_knowledge";
+
+export interface FitmentRow extends CompatRow {
+  _source: FitmentSource;
+  /** for ebay_listings: how many reference listings contain this vehicle ("" otherwise) */
+  _support: string;
+}
+
+export interface FitmentReference {
+  itemId: string;
+  title: string;
+  url: string;
+  partNumber: string;
+  rowCount: number;
 }
 
 export interface ListingChanges {

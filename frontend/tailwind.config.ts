@@ -4,6 +4,15 @@ export default {
   content: ["./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      keyframes: {
+        "progress-slide": {
+          "0%": { left: "-35%" },
+          "100%": { left: "100%" },
+        },
+      },
+      animation: {
+        "progress-slide": "progress-slide 1.4s ease-in-out infinite",
+      },
       colors: {
         brand: {
           50: "#eef2ff",

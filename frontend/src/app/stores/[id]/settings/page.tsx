@@ -199,6 +199,35 @@ export default function SettingsPage() {
           <div>
             <Toggle checked={s.modules.title.enabled} onChange={(v) => up("modules.title.enabled", v)} label={<b>Titles</b>} />
             <p className="ml-11 text-xs text-slate-500">Max 80 characters, no spammy words, never much shorter than the current title.</p>
+            <div className="ml-11 mt-3 max-w-3xl">
+              <Field
+                label="Title format (optional)"
+                hint={
+                  <>
+                    Parts in <code className="rounded bg-slate-100 px-1">{"{braces}"}</code> are filled in by Claude in this order; any
+                    text outside braces (like <code className="rounded bg-slate-100 px-1">Used OEM</code>) must appear in every new title
+                    or it is rejected. Leave empty for no fixed format.
+                  </>
+                }
+              >
+                <input
+                  className="input font-mono"
+                  value={s.modules.title.template ?? ""}
+                  disabled={!s.modules.title.enabled}
+                  placeholder="{Year range} {Brand} {Model} {Part name and location} {Part number} Used OEM"
+                  onChange={(e) => up("modules.title.template", e.target.value)}
+                />
+              </Field>
+              {!s.modules.title.template && (
+                <button
+                  type="button"
+                  className="mt-1 text-xs font-medium text-brand-600 hover:underline"
+                  onClick={() => up("modules.title.template", "{Year range} {Brand} {Model} {Part name and location} {Part number} Used OEM")}
+                >
+                  Use the auto-parts format: Year range › Brand › Model › Part name & location › Part number › Used OEM
+                </button>
+              )}
+            </div>
           </div>
 
           <div>
@@ -243,16 +272,45 @@ export default function SettingsPage() {
               onChange={(v) => up("modules.compatibility.enabled", v)}
               label={<b>Parts compatibility (fitment)</b>}
             />
-            <div className="ml-11 mt-2">
+            <div className="ml-11 mt-2 space-y-3">
+              <Toggle
+                checked={s.modules.compatibility.researchEbay}
+                disabled={!s.modules.compatibility.enabled}
+                onChange={(v) => up("modules.compatibility.researchEbay", v)}
+                label="Research fitment from other eBay listings with the same part number"
+              />
+              <Toggle
+                checked={s.modules.compatibility.allowKnowledge}
+                disabled={!s.modules.compatibility.enabled}
+                onChange={(v) => up("modules.compatibility.allowKnowledge", v)}
+                label="Let Claude add vehicles from its knowledge of the part number (high confidence only, checked against eBay's vehicle catalog)"
+              />
+              <div className="grid max-w-xl gap-4 sm:grid-cols-2">
+                <Field
+                  label="Listings that must agree"
+                  hint="A vehicle from other listings is used only if at least this many of them include it."
+                >
+                  <Num value={s.modules.compatibility.minListings} min={1} onChange={(v) => up("modules.compatibility.minListings", v)} />
+                </Field>
+                <Field label="Reference listings to read" hint="More = fuller fitment, slightly slower. Max 10.">
+                  <Num
+                    value={s.modules.compatibility.maxReferenceListings}
+                    min={1}
+                    onChange={(v) => up("modules.compatibility.maxReferenceListings", v)}
+                  />
+                </Field>
+              </div>
               <Toggle
                 checked={s.modules.compatibility.apply}
+                disabled={!s.modules.compatibility.enabled}
                 onChange={(v) => up("modules.compatibility.apply", v)}
-                label="Push fitment to eBay (off = show suggestions only)"
+                label={<b>Push fitment to eBay (off = show it in the review screen only)</b>}
               />
               {s.modules.compatibility.apply && (
-                <div className="mt-2">
-                  <Alert kind="warning">Wrong fitment causes returns and defects. Only enable after checking several batches.</Alert>
-                </div>
+                <Alert kind="warning">
+                  Fitment is added to the listing&apos;s compatibility table (existing vehicles are kept). Wrong fitment causes returns,
+                  so check a few batches first.
+                </Alert>
               )}
             </div>
           </div>

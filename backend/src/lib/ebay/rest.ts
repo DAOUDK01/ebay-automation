@@ -6,6 +6,7 @@ import type { Aspect, Competitor, EbayItem } from "./types";
 
 const aspectCache = new Map<string, { at: number; aspects: Aspect[] }>();
 const treeIdCache = new Map<string, string>();
+const compatCache = new Map<string, { at: number; values: string[] | null }>();
 const ASPECT_TTL = 24 * 3600_000;
 
 export class RestClient {
@@ -76,6 +77,75 @@ export class RestClient {
     });
     aspectCache.set(key, { at: Date.now(), aspects });
     return aspects;
+  }
+
+  // ---------------------------------------------------------------- fitment
+
+  /** Other sellers' listings whose title contains this exact part number (dashes/spaces ignored). */
+  async searchByPartNumber(partNumber: string, opts: { excludeSeller?: string; limit?: number } = {}) {
+    const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const want = norm(partNumber);
+    if (want.length < 5) return [];
+    const filters = ["buyingOptions:{FIXED_PRICE}"];
+    if (opts.excludeSeller) filters.push(`excludeSellers:{${opts.excludeSeller}}`);
+    const j = await this.get("/buy/browse/v1/item_summary/search", {
+      q: partNumber.slice(0, 100),
+      limit: String(Math.min(50, (opts.limit ?? 5) * 4)),
+      filter: filters.join(","),
+    });
+    return (j.itemSummaries ?? [])
+      .filter((s: any) => s.legacyItemId && norm(s.title ?? "").includes(want))
+      .slice(0, opts.limit ?? 5)
+      .map((s: any) => ({ itemId: String(s.legacyItemId), title: String(s.title ?? ""), url: String(s.itemWebUrl ?? "") }));
+  }
+
+  /** Values eBay's vehicle catalog allows for a property (e.g. Model) given filters (e.g. Year, Make).
+   *  Returns null when the category has no compatibility catalog or the lookup fails. */
+  async compatibilityValues(categoryId: string, property: string, filters: Record<string, string>): Promise<string[] | null> {
+    const filter = Object.entries(filters)
+      .map(([k, v]) => `${k}:${v}`)
+      .join(",");
+    const key = `${this.marketplaceId}:${categoryId}:${property}:${filter}`;
+    const c = compatCache.get(key);
+    if (c && Date.now() - c.at < ASPECT_TTL) return c.values;
+    let values: string[] | null = null;
+    for (const mp of this.treeMarketplaces()) {
+      try {
+        const tree = await this.categoryTreeId(mp);
+        const params: Record<string, string> = { category_id: categoryId, compatibility_property: property };
+        if (filter) params.filter = filter;
+        const j = await this.get(`/commerce/taxonomy/v1/category_tree/${tree}/get_compatibility_property_values`, params);
+        values = (j.compatibilityPropertyValues ?? []).map((v: any) => String(v.value));
+        break;
+      } catch (e: any) {
+        if (!/62005|does not belong to specified category tree/.test(String(e?.message))) {
+          logger.warn(`compatibility lookup failed (${property} ${filter})`, e);
+          break;
+        }
+      }
+    }
+    compatCache.set(key, { at: Date.now(), values });
+    return values;
+  }
+
+  /** Check Year/Make/Model against eBay's catalog and return eBay's exact spelling.
+   *  null = not a valid vehicle; undefined = couldn't check (no catalog for this category). */
+  async validateVehicle(
+    categoryId: string,
+    v: { Year: string; Make: string; Model: string },
+  ): Promise<{ Year: string; Make: string; Model: string } | null | undefined> {
+    const match = (list: string[], want: string) => {
+      const n = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+      return list.find((x) => n(x) === n(want));
+    };
+    const makes = await this.compatibilityValues(categoryId, "Make", { Year: v.Year });
+    if (makes === null) return undefined;
+    const make = match(makes, v.Make);
+    if (!make) return null;
+    const models = await this.compatibilityValues(categoryId, "Model", { Year: v.Year, Make: make });
+    if (models === null) return undefined;
+    const model = match(models, v.Model);
+    return model ? { Year: v.Year, Make: make, Model: model } : null;
   }
 
   async search(q: string, opts: { categoryId?: string; conditionId?: string; excludeSeller?: string; limit?: number }) {

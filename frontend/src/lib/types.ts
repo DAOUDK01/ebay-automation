@@ -23,7 +23,7 @@ export interface StoreSettings {
     outputPricePerMtok: number;
   };
   modules: {
-    title: { enabled: boolean };
+    title: { enabled: boolean; template: string };
     pricing: {
       enabled: boolean;
       maxChangePct: number;
@@ -33,7 +33,14 @@ export interface StoreSettings {
       minPrice: number;
     };
     specifics: { enabled: boolean; overwriteExisting: boolean };
-    compatibility: { enabled: boolean; apply: boolean };
+    compatibility: {
+      enabled: boolean;
+      apply: boolean;
+      researchEbay: boolean;
+      allowKnowledge: boolean;
+      minListings: number;
+      maxReferenceListings: number;
+    };
   };
 }
 
@@ -82,6 +89,7 @@ export interface Batch {
   costUsd: number;
   error?: string;
   counts: { total: number; processed: number; proposed: number; noChange: number; errors: number; pushed: number; failed: number };
+  push?: { total: number; done: number; failed: number; currentItemId?: string; startedAt?: string | null; finishedAt?: string | null };
 }
 
 export interface Listing {
@@ -111,6 +119,23 @@ export interface EbayItemSnapshot {
   shipping?: { dispatchDays: string; policy: string; options: { service: string; cost: string; free: boolean }[] };
 }
 
+export interface FitmentRow {
+  Year: string;
+  Make: string;
+  Model: string;
+  Trim?: string;
+  Engine?: string;
+  _source: "ebay_listings" | "listing_text" | "part_number_knowledge";
+  _support: string;
+}
+
+export interface FitmentInfo {
+  partNumbers: string[];
+  references: { itemId: string; title: string; url: string; partNumber: string; rowCount: number }[];
+  dropped: string[];
+  existingCount: number;
+}
+
 export interface Proposal {
   _id: string;
   batchId: string;
@@ -125,7 +150,7 @@ export interface Proposal {
     shipping_notes?: string;
     other_notes?: string;
     confidence?: string;
-    suggested_compatibility_rows?: Record<string, string>[];
+    suggested_compatibility_rows?: (Record<string, string> & Partial<Pick<FitmentRow, "_source" | "_support">>)[];
   };
   changes: {
     title?: string;
@@ -134,6 +159,7 @@ export interface Proposal {
     compatibilityAdd?: Record<string, string>[];
   };
   notes: string[];
+  fitment?: FitmentInfo | null;
   competitors?: { title: string; price: number; shipping: number | null; condition: string; url: string; sellerFeedback: number | null }[];
   error?: string;
   warnings?: string[];

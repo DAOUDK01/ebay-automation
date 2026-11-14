@@ -49,6 +49,20 @@ export function htmlToText(html: string, limit = 2500): string {
     .slice(0, limit);
 }
 
+/** <ItemCompatibilityList> -> rows like { Year, Make, Model, Trim, Engine } (eBay catalog spelling). */
+export function parseCompatibility(it: any): CompatRow[] {
+  const out: CompatRow[] = [];
+  for (const c of it?.ItemCompatibilityList?.Compatibility ?? []) {
+    const row: CompatRow = {};
+    for (const nv of c.NameValueList ?? []) {
+      const n = txt(nv.Name);
+      if (n) row[n] = txt((nv.Value ?? [])[0]);
+    }
+    if (Object.keys(row).length) out.push(row);
+  }
+  return out;
+}
+
 /** Pure function: Trading GetItem <Item> object -> normalized EbayItem. Exported for tests. */
 export function normalizeItem(itemId: string, it: any): EbayItem {
   const specifics: Specifics = {};
@@ -56,15 +70,7 @@ export function normalizeItem(itemId: string, it: any): EbayItem {
     const name = txt(nv.Name);
     if (name) specifics[name] = (nv.Value ?? []).map(txt).filter(Boolean);
   }
-  const compat: CompatRow[] = [];
-  for (const c of it.ItemCompatibilityList?.Compatibility ?? []) {
-    const row: CompatRow = {};
-    for (const nv of c.NameValueList ?? []) {
-      const n = txt(nv.Name);
-      if (n) row[n] = txt((nv.Value ?? [])[0]);
-    }
-    if (Object.keys(row).length) compat.push(row);
-  }
+  const compat = parseCompatibility(it);
   const pics = it.PictureDetails?.PictureURL ?? [];
   return {
     itemId,
@@ -86,6 +92,7 @@ export function normalizeItem(itemId: string, it: any): EbayItem {
     itemSpecifics: specifics,
     compatibilityCount: compat.length,
     compatibilitySample: compat.slice(0, 25),
+    compatibilityAll: compat,
     shipping: {
       options: (it.ShippingDetails?.ShippingServiceOptions ?? []).map((so: any) => ({
         service: txt(so.ShippingService),
@@ -227,6 +234,18 @@ export class TradingClient {
     const it = (root.Item ?? [])[0];
     if (!it) throw new EbayApiError(`GetItem returned no item for ${itemId}`);
     return normalizeItem(itemId, it);
+  }
+
+  /** Compatibility table of ANY public listing (used to learn fitment from other listings of the same part number). */
+  async getItemCompatibility(itemId: string): Promise<{ itemId: string; title: string; rows: CompatRow[] }> {
+    const root = await this.call(
+      "GetItem",
+      `<ItemID>${xmlEscape(itemId)}</ItemID><IncludeItemCompatibilityList>true</IncludeItemCompatibilityList>` +
+        `<OutputSelector>Item.ItemID</OutputSelector><OutputSelector>Item.Title</OutputSelector>` +
+        `<OutputSelector>Item.ItemCompatibilityList</OutputSelector>`,
+    );
+    const it = (root.Item ?? [])[0];
+    return { itemId, title: txt(it?.Title), rows: parseCompatibility(it) };
   }
 
   /** Returns warning messages (if any). Throws on failure.

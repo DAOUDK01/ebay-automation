@@ -26,6 +26,8 @@ const proposalSchema = new Schema(
     notes: [String],
     competitorQuery: String,
     competitors: { type: Schema.Types.Mixed, default: [] },
+    /** fitment research: part numbers, reference listings used, rows dropped and why */
+    fitment: { type: Schema.Types.Mixed, default: null },
     error: { type: String, default: "" },
     warnings: [String],
     costUsd: { type: Number, default: 0 },

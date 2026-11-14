@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, money } from "@/lib/api";
-import type { Proposal } from "@/lib/types";
+import type { FitmentRow, Proposal } from "@/lib/types";
+import { FitmentPanel } from "./FitmentPanel";
 import { toast } from "./toast";
 import { Badge, Button, StatusBadge, cx } from "./ui";
 
@@ -23,7 +24,18 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
   const newSpecs = Object.entries(p.changes.itemSpecifics ?? {}).filter(
     ([k, v]) => JSON.stringify(b.itemSpecifics?.[k]) !== JSON.stringify(v),
   );
-  const compat = p.changes.compatibilityAdd ?? p.suggestion?.suggested_compatibility_rows ?? [];
+  // rows with their source; older proposals stored rows without _source
+  const compat = (p.suggestion?.suggested_compatibility_rows ?? p.changes.compatibilityAdd ?? []).map((r) => {
+    const row = r as Record<string, string>;
+    return {
+      ...row,
+      Year: row.Year ?? "",
+      Make: row.Make ?? "",
+      Model: row.Model ?? "",
+      _source: (row._source as FitmentRow["_source"]) ?? "listing_text",
+      _support: row._support ?? "",
+    } satisfies FitmentRow;
+  });
 
   async function patch(body: Record<string, unknown>, ok: string) {
     setBusy(String(body.status ?? "save"));
@@ -150,8 +162,8 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
         </div>
       )}
 
-      {(newSpecs.length > 0 || compat.length > 0) && (
-        <div className="grid gap-4 border-t border-slate-100 p-4 md:grid-cols-2">
+      {(newSpecs.length > 0 || compat.length > 0 || p.fitment) && (
+        <div className="grid gap-4 border-t border-slate-100 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
           {newSpecs.length > 0 && (
             <div>
               <div className="label">Item specifics to add</div>
@@ -164,16 +176,9 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
               </ul>
             </div>
           )}
-          {compat.length > 0 && (
-            <div>
-              <div className="label">
-                Fitment {p.changes.compatibilityAdd ? "to add" : "suggested (report only)"} · {compat.length} rows
-              </div>
-              <div className="max-h-32 overflow-y-auto text-sm text-slate-700">
-                {compat.slice(0, 40).map((r, i) => (
-                  <div key={i}>{Object.values(r).join(" ")}</div>
-                ))}
-              </div>
+          {(compat.length > 0 || p.fitment) && (
+            <div className={cx(!newSpecs.length && "md:col-span-2")}>
+              <FitmentPanel rows={compat} fitment={p.fitment} pushing={Boolean(p.changes.compatibilityAdd?.length)} />
             </div>
           )}
         </div>

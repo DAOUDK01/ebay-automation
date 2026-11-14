@@ -122,7 +122,38 @@ async function main() {
     ...extra,
   });
   await Proposal.insertMany([
-    p(0, "proposed", { title: "Front Ceramic Brake Pads for Honda Civic 2016 2017 2018 2019 2020 2021 Low Dust", price: 37.49 }),
+    p(
+      0,
+      "proposed",
+      { title: "2016-2021 Honda Civic Front Brake Pad Set Ceramic 45022-TBA-A01 Used OEM", price: 37.49 },
+      {
+        suggestion: {
+          title_reason: "Follows the store format: years, brand, model, part & position, part number, Used OEM.",
+          price_reason: "Closest matches sell for $35-$39 with free shipping.",
+          confidence: "high",
+          suggested_compatibility_rows: [
+            ...["2016", "2017", "2018", "2019", "2020", "2021"].flatMap((y) =>
+              ["EX Sedan 4-Door", "LX Sedan 4-Door", "Sport Hatchback 4-Door"].map((t) => ({
+                Year: y, Make: "Honda", Model: "Civic", Trim: t, Engine: "2.0L 1996CC l4 GAS DOHC Naturally Aspirated",
+                _source: "ebay_listings", _support: "3",
+              })),
+            ),
+            { Year: "2022", Make: "Honda", Model: "Civic", _source: "part_number_knowledge", _support: "" },
+            { Year: "2016", Make: "Acura", Model: "ILX", _source: "part_number_knowledge", _support: "" },
+          ],
+        },
+        fitment: {
+          partNumbers: ["45022-TBA-A01"],
+          references: [
+            { itemId: "325511223344", title: "16-21 Honda Civic Front Brake Pads OEM 45022-TBA-A01", url: "", partNumber: "45022-TBA-A01", rowCount: 54 },
+            { itemId: "325599887766", title: "Genuine Honda 45022-TBA-A01 Front Pads Civic 2016-2021", url: "", partNumber: "45022-TBA-A01", rowCount: 48 },
+            { itemId: "325577665544", title: "OEM Honda Civic brake pad set front 45022TBAA01", url: "", partNumber: "45022-TBA-A01", rowCount: 51 },
+          ],
+          dropped: ["2023 Honda Civic: part-number knowledge (medium confidence)", "2016 Honda Accord: not in eBay's vehicle catalog"],
+          existingCount: 0,
+        },
+      },
+    ),
     p(1, "proposed", {
       title: "Rear Brake Rotors Pair Fits Toyota Camry 2018-2023 Drilled Slotted",
       itemSpecifics: { Brand: ["Unbranded"], Placement: ["Rear"], "Manufacturer Part Number": ["DPO-1001"] },

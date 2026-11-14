@@ -1,7 +1,8 @@
 /** Hard rules in code (not in Claude) that decide which suggested edits are allowed. Pure functions. */
 import type { StoreSettings } from "../models/Store";
 import type { ClaudeSuggestion } from "./claude";
-import type { Aspect, CompatRow, EbayItem, Specifics } from "./ebay/types";
+import type { Aspect, CompatRow, EbayItem, FitmentRow, Specifics } from "./ebay/types";
+import { toCompatRows } from "./fitment";
 
 const BANNED_TITLE = /(l@@k|\bwow\b|!!|\*|\bbest\b|\bcheap\b|free shipping)/i;
 
@@ -10,11 +11,22 @@ export interface CheckResult<T> {
   note: string;
 }
 
-export function checkTitle(oldTitle: string, newTitle: string): CheckResult<string> {
+/** Fixed text in a title template = everything outside {…}, e.g. "Used OEM". */
+export function templateLiterals(template: string | undefined): string[] {
+  if (!template?.trim()) return [];
+  return template
+    .split(/\{[^}]*\}/)
+    .map((s) => s.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+export function checkTitle(oldTitle: string, newTitle: string, template?: string): CheckResult<string> {
   const t = (newTitle || "").replace(/\s+/g, " ").trim();
   if (!t || t === oldTitle.trim()) return { value: null, note: "title unchanged" };
   if (t.length > 80) return { value: null, note: `title rejected: ${t.length} chars > 80` };
   if (BANNED_TITLE.test(t)) return { value: null, note: "title rejected: banned words/symbols" };
+  const missing = templateLiterals(template).filter((lit) => !t.toLowerCase().includes(lit.toLowerCase()));
+  if (missing.length) return { value: null, note: `title rejected: missing required text ${missing.map((m) => `"${m}"`).join(", ")}` };
   if (t.length < Math.min(oldTitle.length, 80) * 0.7) return { value: null, note: "title rejected: much shorter than current" };
   return { value: t, note: "title: ok" };
 }
@@ -107,28 +119,24 @@ export function checkSpecifics(
   return { value: changed ? current : null, notes };
 }
 
+/** Researched fitment rows (see lib/fitment.ts) -> what gets pushed. Report-only unless `apply` is on. */
 export function checkCompatibility(
-  item: Pick<EbayItem, "compatibilitySample">,
-  rows: ClaudeSuggestion["compatibility"],
+  rows: FitmentRow[],
   c: StoreSettings["modules"]["compatibility"],
-): CheckResult<CompatRow[]> & { suggested: CompatRow[] } {
-  if (!c.enabled) return { value: null, note: "", suggested: [] };
-  const existing = new Set(item.compatibilitySample.map((r) => `${r.Year}|${r.Make}|${r.Model}`));
-  const clean: CompatRow[] = [];
-  for (const r of rows ?? []) {
-    const year = r.year?.trim();
-    if (!year || !/^(19|20)\d\d$/.test(year) || !r.make?.trim() || !r.model?.trim()) continue;
-    const row: CompatRow = { Year: year, Make: r.make.trim(), Model: r.model.trim() };
-    if (r.trim?.trim()) row.Trim = r.trim.trim();
-    if (r.engine?.trim()) row.Engine = r.engine.trim();
-    if (!existing.has(`${row.Year}|${row.Make}|${row.Model}`)) clean.push(row);
-  }
-  if (!clean.length) return { value: null, note: "", suggested: [] };
-  const limited = clean.slice(0, 100);
+): CheckResult<CompatRow[]> & { suggested: FitmentRow[] } {
+  if (!c.enabled || !rows.length) return { value: null, note: "", suggested: [] };
+  const bySource = (s: string) => rows.filter((r) => r._source === s).length;
+  const detail = [
+    bySource("ebay_listings") && `${bySource("ebay_listings")} from other eBay listings`,
+    bySource("listing_text") && `${bySource("listing_text")} from the listing text`,
+    bySource("part_number_knowledge") && `${bySource("part_number_knowledge")} from part-number knowledge`,
+  ]
+    .filter(Boolean)
+    .join(", ");
   if (!c.apply) {
-    return { value: null, note: `compatibility: ${limited.length} rows suggested (report only)`, suggested: limited };
+    return { value: null, note: `compatibility: ${rows.length} vehicles found (${detail}) - report only`, suggested: rows };
   }
-  return { value: limited, note: `compatibility: add ${limited.length} rows`, suggested: limited };
+  return { value: toCompatRows(rows), note: `compatibility: add ${rows.length} vehicles (${detail})`, suggested: rows };
 }
 
 /** Is local time (in tz) inside "HH:MM-HH:MM"? Handles windows that cross midnight. */

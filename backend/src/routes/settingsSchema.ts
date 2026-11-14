@@ -33,7 +33,7 @@ export const settingsSchema = z.object({
     outputPricePerMtok: z.number().min(0),
   }),
   modules: z.object({
-    title: z.object({ enabled: z.boolean() }),
+    title: z.object({ enabled: z.boolean(), template: z.string().max(300).default("") }),
     pricing: z.object({
       enabled: z.boolean(),
       maxChangePct: z.number().min(0).max(50),
@@ -43,6 +43,13 @@ export const settingsSchema = z.object({
       minPrice: z.number().min(0),
     }),
     specifics: z.object({ enabled: z.boolean(), overwriteExisting: z.boolean() }),
-    compatibility: z.object({ enabled: z.boolean(), apply: z.boolean() }),
+    compatibility: z.object({
+      enabled: z.boolean(),
+      apply: z.boolean(),
+      researchEbay: z.boolean().default(true),
+      allowKnowledge: z.boolean().default(true),
+      minListings: z.number().int().min(1).max(10).default(2),
+      maxReferenceListings: z.number().int().min(1).max(10).default(5),
+    }),
   }),
 });

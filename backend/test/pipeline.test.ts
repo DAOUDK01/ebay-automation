@@ -33,7 +33,7 @@ const SUGGESTION: ClaudeSuggestion = {
   item_specifics: [{ name: "Manufacturer Part Number", values: ["AC-555"], source: "description" }],
   recommended_price: 36,
   price_reason: "competitors 35-38",
-  compatibility: [{ year: "2016", make: "Honda", model: "Civic", trim: "", engine: "" }],
+  compatibility: [{ year: "2016", make: "Honda", model: "Civic", trim: "", engine: "", source: "listing_text", confidence: "high" }],
   shipping_notes: "",
   other_notes: "",
   confidence: "high",
@@ -160,7 +160,12 @@ test("sync + review-mode batch + approve + push + revert", async () => {
   assert.equal(revised[0].itemId, "1");
   assert.equal(revised[0].site, "eBayMotors", "revise goes to the listing's own eBay site");
   assert.equal(revised[0].changes.title, "Acme Ceramic Front Brake Pads 2016-2017 Honda Civic AC-555");
-  assert.equal((await Batch.findById(batch!._id))!.status, "done");
+  const afterPush = await Batch.findById(batch!._id);
+  assert.equal(afterPush!.status, "done");
+  assert.equal(afterPush!.push?.total, 1, "push progress: total");
+  assert.equal(afterPush!.push?.done, 1, "push progress: done");
+  assert.equal(afterPush!.push?.failed, 0, "push progress: failed");
+  assert.ok(afterPush!.push?.finishedAt, "push progress: finished");
   assert.equal((await Listing.findOne({ storeId: store._id, itemId: "1" }))!.title, "Acme Ceramic Front Brake Pads 2016-2017 Honda Civic AC-555");
 
   // revert restores the snapshot
@@ -224,6 +229,31 @@ test("a failed category lookup does not sink the listing; retry-errors re-queues
   assert.deepEqual(r.json.job.payload.itemIds, ["3"]);
   const again = await call(`/stores/${String(store._id)}/batches/${first!._id}/retry-errors`, "POST");
   assert.equal(again.status, 409, "second retry while one is queued is refused");
+});
+
+test("store title format reaches Claude and missing fixed text is rejected", async () => {
+  const tpl = "{Year range} {Brand} {Model} {Part name and location} {Part number} Used OEM";
+  const sid = String(store._id);
+  const saved = await call(`/stores/${sid}`, "PATCH", {
+    settings: { ...DEFAULT_SETTINGS, mode: "review", modules: { ...DEFAULT_SETTINGS.modules, title: { enabled: true, template: tpl } } },
+  });
+  assert.equal(saved.status, 200, JSON.stringify(saved.json));
+  assert.equal(saved.json.store.settings.modules.title.template, tpl);
+
+  let seenTemplate: string | undefined;
+  const withFormat: PipelineDeps = {
+    ...deps,
+    suggest: async (_i, _a, _c, opts) => {
+      seenTemplate = opts.titleTemplate;
+      return { suggestion: structuredClone(SUGGESTION), costUsd: 0.01, inputTokens: 1, outputTokens: 1 };
+    },
+  };
+  const fresh = (await Store.findById(store._id)) as StoreDocument;
+  const batch = await runBatch(fresh, withFormat, { itemIds: ["2"] });
+  assert.equal(seenTemplate, tpl, "format is passed to Claude");
+  const p = await Proposal.findOne({ batchId: batch!._id, itemId: "2" }).lean();
+  assert.equal(p!.changes.title, undefined, "title without 'Used OEM' is not applied");
+  assert.ok(p!.notes.some((n: string) => /missing required text "Used OEM"/.test(n)));
 });
 
 test("costs CSV import + store isolation", async () => {

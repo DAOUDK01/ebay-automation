@@ -22,6 +22,15 @@ const batchSchema = new Schema(
       failed: { type: Number, default: 0 },
     },
     error: String,
+    /** live progress of the current/last push to eBay (shown as a progress bar) */
+    push: {
+      total: { type: Number, default: 0 },
+      done: { type: Number, default: 0 },
+      failed: { type: Number, default: 0 },
+      currentItemId: { type: String, default: "" },
+      startedAt: Date,
+      finishedAt: Date,
+    },
   },
   { timestamps: true },
 );

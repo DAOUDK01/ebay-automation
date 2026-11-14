@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
+import { BatchProgress } from "@/components/BatchProgress";
 import { ProposalCard } from "@/components/ProposalCard";
 import { toast } from "@/components/toast";
 import { Alert, Button, Card, Spinner, StatusBadge, cx } from "@/components/ui";
@@ -20,7 +21,13 @@ const FILTERS = [
 export default function BatchReviewPage() {
   const { id, batchId } = useParams<{ id: string; batchId: string }>();
   const { data, mutate } = useSWR<{ batch: Batch; proposals: Proposal[] }>(`/stores/${id}/batches/${batchId}`, fetcher, {
-    refreshInterval: (d) => (d && ["running", "pushing"].includes(d.batch.status) ? 4000 : 0),
+    // live progress: poll every 2s while optimizing/pushing; slow poll shortly after a push to show the summary
+    refreshInterval: (d) =>
+      d && ["running", "pushing"].includes(d.batch.status)
+        ? 2000
+        : d?.batch.push?.finishedAt && Date.now() - new Date(d.batch.push.finishedAt).getTime() < 5 * 60_000
+          ? 15000
+          : 0,
   });
   const [filter, setFilter] = useState("review");
   const [busy, setBusy] = useState("");
@@ -121,16 +128,9 @@ export default function BatchReviewPage() {
             {batch.mode} mode · started {dateTime(batch.startedAt)}
           </span>
         </div>
-        {batch.status === "running" && (
-          <div className="mt-3">
-            <Alert kind="info">This batch is still being processed - results appear as each listing finishes.</Alert>
-          </div>
-        )}
-        {batch.status === "pushing" && (
-          <div className="mt-3">
-            <Alert kind="info">Pushing approved changes to eBay…</Alert>
-          </div>
-        )}
+        <div className="mt-4 empty:hidden">
+          <BatchProgress batch={batch} />
+        </div>
         {batch.error && (
           <div className="mt-3">
             <Alert kind="warning">{batch.error}</Alert>
