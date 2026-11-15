@@ -112,9 +112,23 @@ const PART_NUMBER_SPECIFICS = new Map(
   ]),
 );
 const MAX_SPECIFICS = 45;
+/** custom (non-category) names allowed beyond part numbers, so category aspects keep priority */
+const MAX_CUSTOM = 12;
+const CUSTOM_NAME_OK = /^[A-Za-z][A-Za-z0-9 /&()'.,-]{1,64}$/;
+
+/**
+ * Safe values for a used-OEM parts store, filled only when the category has the aspect, the listing
+ * doesn't set it yet and the value is allowed. A genuine OEM part is a direct replacement and is sold
+ * as-is (not modified, not a bundle).
+ */
+const STORE_DEFAULTS: { name: string; value: string; when: (title: string) => boolean }[] = [
+  { name: "Fitment Type", value: "Direct Replacement", when: (t) => /\boem\b|\bgenuine\b/i.test(t) },
+  { name: "Modified Item", value: "No", when: () => true },
+  { name: "Custom Bundle", value: "No", when: () => true },
+];
 
 export function checkSpecifics(
-  item: Pick<EbayItem, "itemSpecifics" | "variationNames">,
+  item: Pick<EbayItem, "itemSpecifics" | "variationNames"> & { title?: string },
   suggested: ClaudeSuggestion["item_specifics"],
   aspects: Aspect[],
   s: StoreSettings["modules"]["specifics"],
@@ -129,6 +143,8 @@ export function checkSpecifics(
   const currentLower = new Map(Object.keys(current).map((k) => [k.toLowerCase(), k]));
   const notes: string[] = [];
   let changed = false;
+  let customCount = 0;
+  const title = item.title ?? "";
 
   // category aspects first (required > recommended > optional), custom names last - so the 45 limit keeps the important ones
   const rank = (n: string) => {
@@ -142,7 +158,8 @@ export function checkSpecifics(
     let values = [...new Set((sug.values ?? []).map((v) => v.trim()).filter(Boolean))];
     if (!name || !values.length) continue;
     const source = sug.source ?? "listing_text";
-    if (source === "part_number_knowledge" && (!s.allowKnowledge || sug.confidence !== "high")) {
+    // part-level facts Claude knows from the part number: high and medium are used, low is not
+    if (source === "part_number_knowledge" && (!s.allowKnowledge || sug.confidence === "low")) {
       notes.push(`skip '${name}': part-number knowledge ${s.allowKnowledge ? `(${sug.confidence} confidence)` : "(disabled)"}`);
       continue;
     }
@@ -153,12 +170,15 @@ export function checkSpecifics(
     }
     const a = byName.get(name.toLowerCase());
     if (!a) {
-      const custom = PART_NUMBER_SPECIFICS.get(name.toLowerCase()) ?? evidence.get(name.toLowerCase());
-      if (!s.allowCustomNames || !custom || name.length > 65) {
-        notes.push(`skip '${name}': not an aspect of this category`);
+      const known = PART_NUMBER_SPECIFICS.get(name.toLowerCase()) ?? evidence.get(name.toLowerCase());
+      // any other useful buyer-facing name (e.g. "Connector Type") as a custom specific, capped
+      const free = !known && CUSTOM_NAME_OK.test(name) && customCount < MAX_CUSTOM;
+      if (!s.allowCustomNames || (!known && !free)) {
+        notes.push(`skip '${name}': ${!s.allowCustomNames ? "custom names disabled" : customCount >= MAX_CUSTOM ? `custom specifics limit (${MAX_CUSTOM})` : "not a valid name"}`);
         continue;
       }
-      name = custom;
+      if (free) customCount++;
+      name = known ?? name;
       values = values.filter((v) => v.length <= 65).slice(0, 30);
       if (!values.length) continue;
     } else {
@@ -168,11 +188,13 @@ export function checkSpecifics(
     if (a && a.mode === "SELECTION_ONLY") {
       const allowed = new Map(a.values.map((v) => [v.toLowerCase(), v]));
       const bad = values.filter((v) => !allowed.has(v.toLowerCase()));
-      if (bad.length) {
-        notes.push(`skip '${name}': value(s) ${JSON.stringify(bad)} not allowed`);
+      // keep the allowed values; drop only the wrong ones
+      values = values.filter((v) => allowed.has(v.toLowerCase())).map((v) => allowed.get(v.toLowerCase())!);
+      if (!values.length) {
+        notes.push(`skip '${name}': value(s) ${JSON.stringify(bad)} not in eBay's list`);
         continue;
       }
-      values = values.map((v) => allowed.get(v.toLowerCase())!);
+      if (bad.length) notes.push(`'${name}': dropped value(s) ${JSON.stringify(bad)} not in eBay's list`);
     }
     if (a && !a.multi) values = values.slice(0, 1);
     if (a?.maxLength) values = values.filter((v) => v.length <= a.maxLength!);
@@ -193,6 +215,19 @@ export function checkSpecifics(
       current[name] = values;
       currentLower.set(name.toLowerCase(), name);
     }
+    changed = true;
+  }
+
+  // store defaults for aspects nobody filled
+  for (const d of STORE_DEFAULTS) {
+    const a = byName.get(d.name.toLowerCase());
+    if (!a || currentLower.has(d.name.toLowerCase()) || !d.when(title)) continue;
+    if (variation.has(a.name.toLowerCase()) || Object.keys(current).length >= MAX_SPECIFICS) continue;
+    if (a.mode === "SELECTION_ONLY" && !a.values.some((v) => v.toLowerCase() === d.value.toLowerCase())) continue;
+    const value = a.values.find((v) => v.toLowerCase() === d.value.toLowerCase()) ?? d.value;
+    current[a.name] = [value];
+    currentLower.set(a.name.toLowerCase(), a.name);
+    notes.push(`add '${a.name}': ["${value}"] (store default)`);
     changed = true;
   }
   return { value: changed ? current : null, notes };

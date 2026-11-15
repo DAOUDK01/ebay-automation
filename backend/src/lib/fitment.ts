@@ -77,7 +77,13 @@ export interface SpecificsEvidence {
 export const EMPTY_EVIDENCE: FitmentEvidence = { partNumbers: [], references: [], rows: [], summary: [], specifics: [] };
 
 /** Specifics that describe the individual copy being sold, not the part - never taken from other listings. */
-export const PER_COPY_SPECIFICS = /^(condition|seller notes|color|colour|warranty|manufacturer warranty|items included|custom bundle|modified item|modification description|non-domestic product|california prop 65 warning|unit quantity|unit type)$/i;
+export const PER_COPY_SPECIFICS = new RegExp(
+  "^(condition|seller notes|color|colour|warranty|manufacturer warranty|items included|custom bundle|modified item|" +
+    "modification description|non-domestic product|california prop 65 warning|unit quantity|unit type" +
+    // weight and size: other sellers' values describe their copy/packaging and are often wrong (e.g. "45 g")
+    "|.*\\bweight\\b.*|.*\\bdimensions?\\b.*|(item|package|product|overall) (length|width|height|depth|diameter|size))$",
+  "i",
+);
 
 export interface FitmentDeps {
   searchByPartNumber?: (pn: string, opts: { excludeSeller?: string; limit?: number }) => Promise<{ itemId: string; title: string; url: string }[]>;

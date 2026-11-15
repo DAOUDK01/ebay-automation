@@ -70,6 +70,14 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
   // where each suggested specific came from (Claude tags every value)
   const specSource = (name: string) =>
     p.suggestion?.item_specifics?.find((s) => s.name.toLowerCase() === name.toLowerCase())?.source;
+  // specifics the guardrails refused, with the reason, and ones filled from store defaults
+  const skippedSpecs = (p.notes ?? [])
+    .map((n) => /^skip '(.+?)': (.+)$/.exec(n))
+    .filter((m): m is RegExpExecArray => Boolean(m) && !/compatib/i.test(m![2]))
+    .map((m) => ({ name: m[1], why: m[2] }));
+  const storeDefaults = new Set(
+    (p.notes ?? []).map((n) => /^add '(.+?)': .*\(store default\)$/.exec(n)?.[1]).filter(Boolean) as string[],
+  );
   const specCounts: Record<string, number> = {};
   for (const [k] of newSpecs) {
     const src = specSource(k) ?? "listing_text";
@@ -239,6 +247,11 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
                   <li key={k} className="flex flex-wrap items-baseline gap-x-1.5">
                     <span className="font-medium">{k}:</span>
                     <span className="min-w-0 break-words">{v.join(", ")}</span>
+                    {storeDefaults.has(k) && (
+                      <span className="rounded bg-slate-100 px-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600" title="Safe default for a used OEM part">
+                        store default
+                      </span>
+                    )}
                     {specSource(k) && specSource(k) !== "listing_text" && (
                       <span
                         className={cx(
@@ -253,6 +266,20 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
                   </li>
                 ))}
               </ul>
+              {skippedSpecs.length > 0 && (
+                <details className="mt-2 text-xs text-slate-500">
+                  <summary className="cursor-pointer font-medium text-slate-600">
+                    {skippedSpecs.length} suggested specific{skippedSpecs.length === 1 ? "" : "s"} not added - why?
+                  </summary>
+                  <ul className="mt-1 space-y-0.5">
+                    {skippedSpecs.map((s, i) => (
+                      <li key={i}>
+                        <span className="font-medium text-slate-700">{s.name}</span>: {s.why}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             </div>
           )}
           {(compat.length > 0 || p.fitment) && (

@@ -81,7 +81,7 @@ test("price: capped, needs cost to decrease, respects floor", () => {
   assert.equal(checkPrice(item, 38, 10, { ...pricing, enabled: false }).value, null);
 });
 
-test("specifics: only valid aspects, allowed values, no overwrite by default", () => {
+test("specifics: valid aspects, allowed values kept (wrong ones dropped), custom names, no overwrite by default", () => {
   const item = { itemSpecifics: { Brand: ["Acme"] }, variationNames: [] };
   const r = checkSpecifics(
     item,
@@ -95,7 +95,16 @@ test("specifics: only valid aspects, allowed values, no overwrite by default", (
     ASPECTS,
     DEFAULT_SETTINGS.modules.specifics,
   );
-  assert.deepEqual(r.value, { Brand: ["Acme"], "Manufacturer Part Number": ["AC-555"], "Friction Material": ["Ceramic"] });
+  assert.deepEqual(r.value, {
+    Brand: ["Acme"],
+    "Manufacturer Part Number": ["AC-555"],
+    "Friction Material": ["Ceramic"],
+    "Placement on Vehicle": ["Front"],
+    "Made Up": ["x"],
+  });
+  assert.ok(r.notes.some((n) => n.includes(`dropped value(s) ["Middle"]`)));
+  const junk = checkSpecifics(item, [{ name: "<b>bad</b>", values: ["x"], source: "listing_text" as const, confidence: "high" as const }], ASPECTS, DEFAULT_SETTINGS.modules.specifics);
+  assert.equal(junk.value, null, "invalid custom names rejected");
   const multi = checkSpecifics(item, [{ name: "Placement on Vehicle", values: ["Front", "Rear"], source: "listing_text" as const, confidence: "high" as const }], ASPECTS, DEFAULT_SETTINGS.modules.specifics);
   assert.deepEqual(multi.value?.["Placement on Vehicle"], ["Front", "Rear"]);
   const ow = checkSpecifics(item, [{ name: "Brand", values: ["Bosch"], source: "listing_text" as const, confidence: "high" as const }], ASPECTS, { ...DEFAULT_SETTINGS.modules.specifics, overwriteExisting: true });
@@ -111,14 +120,16 @@ test("specifics: other listings, part-number knowledge, custom part-number names
     { name: "Mirror Features", values: ["Heated", "Power Folding"], source: "other_listings" as const, confidence: "high" as const },
     { name: "Color", values: ["Black"], source: "other_listings" as const, confidence: "high" as const },
     { name: "Random Thing", values: ["x"], source: "other_listings" as const, confidence: "high" as const },
+    { name: "Mirror Glass Type", values: ["Blind Spot"], source: "part_number_knowledge" as const, confidence: "low" as const },
     { name: "Friction Material", values: ["Ceramic"], source: "listing_text" as const, confidence: "high" as const },
   ];
   const r = checkSpecifics(item, sug, ASPECTS, S, ["Mirror Features"]);
   assert.deepEqual(r.value?.["Interchange Part Number"], ["8J0857501", "8J0857501A"], "custom part-number specific allowed");
-  assert.equal(r.value?.["Superseded Part Number"], undefined, "medium-confidence knowledge skipped");
+  assert.deepEqual(r.value?.["Superseded Part Number"], ["8J0857501B"], "medium-confidence knowledge used");
+  assert.equal(r.value?.["Mirror Glass Type"], undefined, "low-confidence knowledge skipped");
   assert.deepEqual(r.value?.["Mirror Features"], ["Heated", "Power Folding"], "name used by other same-part listings allowed");
   assert.equal(r.value?.Color, undefined, "color never taken from other listings");
-  assert.equal(r.value?.["Random Thing"], undefined, "unknown custom name rejected");
+  assert.deepEqual(r.value?.["Random Thing"], ["x"], "useful custom name allowed");
   assert.deepEqual(r.value?.["Friction Material"], ["Ceramic"]);
   assert.ok(r.notes.some((n) => /add 'Interchange Part Number'.*part-number knowledge/.test(n)));
 
@@ -208,4 +219,38 @@ test("Trading XML: parse GetItem and build ReviseFixedPriceItem", () => {
   assert.match(out, /<StartPrice>39.90<\/StartPrice>/);
   assert.match(out, /<ItemSpecifics><NameValueList><Name>Brand<\/Name><Value>Acme<\/Value><\/NameValueList><\/ItemSpecifics>/);
   assert.match(out, /<ReplaceAll>false<\/ReplaceAll><Compatibility>/);
+});
+
+test("specifics: store defaults for used OEM parts fill empty aspects only", () => {
+  const aspects = [
+    { name: "Fitment Type", required: false, usage: "RECOMMENDED", mode: "SELECTION_ONLY", multi: false, values: ["Direct Replacement", "Performance/Custom"] },
+    { name: "Modified Item", required: false, usage: "OPTIONAL", mode: "SELECTION_ONLY", multi: false, values: ["Yes", "No"] },
+    { name: "Custom Bundle", required: false, usage: "OPTIONAL", mode: "SELECTION_ONLY", multi: false, values: ["Yes", "No"] },
+  ] as any;
+  const r = checkSpecifics({ title: "2016-2021 Honda Civic Headlight OEM Used", itemSpecifics: { "Custom Bundle": ["Yes"] }, variationNames: [] }, [], aspects, DEFAULT_SETTINGS.modules.specifics);
+  assert.deepEqual(r.value, { "Custom Bundle": ["Yes"], "Fitment Type": ["Direct Replacement"], "Modified Item": ["No"] });
+  assert.ok(r.notes.some((n) => /store default/.test(n)));
+  // not an OEM title -> no fitment-type default; aspect missing from category -> nothing
+  const r2 = checkSpecifics({ title: "Brake pads", itemSpecifics: {}, variationNames: [] }, [], aspects.slice(0, 1), DEFAULT_SETTINGS.modules.specifics);
+  assert.equal(r2.value, null);
+});
+
+test("specifics: weight/size never copied from other listings or knowledge, only from the listing", () => {
+  const item = { itemSpecifics: {}, variationNames: [] };
+  const S = DEFAULT_SETTINGS.modules.specifics;
+  const r = checkSpecifics(
+    item,
+    [
+      { name: "Item Weight", values: ["45 g"], source: "other_listings", confidence: "high" },
+      { name: "Item Dimensions", values: ["10x5x2 cm"], source: "part_number_knowledge", confidence: "high" },
+      { name: "Manufacturer Part Number", values: ["4H0837099B"], source: "listing_text", confidence: "high" },
+    ],
+    ASPECTS,
+    S,
+  );
+  assert.equal(r.value?.["Item Weight"], undefined);
+  assert.equal(r.value?.["Item Dimensions"], undefined);
+  assert.ok(r.notes.some((n) => n.startsWith("skip 'Item Weight'")));
+  const own = checkSpecifics(item, [{ name: "Item Weight", values: ["1.2 kg"], source: "listing_text", confidence: "high" }], ASPECTS, S);
+  assert.deepEqual(own.value?.["Item Weight"], ["1.2 kg"]);
 });

@@ -77,7 +77,19 @@ Title rules:
 Item specifics rules (more complete specifics = better search ranking, so fill as many as you can
 determine reliably):
 - "missing_aspects" lists every aspect eBay supports for the category that the listing doesn't have
-  yet (REQUIRED first, then RECOMMENDED, then OPTIONAL). Try to fill all of them.
+  yet (REQUIRED first, then RECOMMENDED, then OPTIONAL). Go through them ONE BY ONE and fill every
+  aspect you can determine from the title, description, photos' captions, existing specifics,
+  specifics_evidence or your knowledge of this exact part number. A well-listed auto part usually
+  has 25-40 specifics - do not stop after the obvious ones.
+- Auto-part aspects to always work through when the category has them: Brand, Manufacturer Part
+  Number, OE/OEM Part Number, Interchange Part Number, Superseded Part Number, Placement on Vehicle
+  (all that apply, e.g. Front + Left), Type, Fitment Type, Material, Finish / Surface Finish, Color
+  (only if the listing says it), Features, Bulb Type / Lens Color / Connector / Number of Pins for
+  electrical parts, Number of Pieces, Items Included (listing only), Mounting Hardware Included,
+  Vehicle Make / Model / Year aspects, Country/Region of Manufacture (only if known), Performance
+  Part (No for OEM), Manufacturer Warranty (listing only).
+- You may also add other clearly useful buyer-facing specifics that are not in missing_aspects (e.g.
+  "Connector Type", "Number of Pins", "Mounting Style"), at most 10, short names, factual values.
 - "specifics_evidence" (if present) shows the item specifics used by other eBay listings of the SAME
   part number, with how many listings use each value. Use it for part-level facts.
 - You may also add these part-number specifics even if not in missing_aspects: "Interchange Part
@@ -88,9 +100,12 @@ determine reliably):
   * "other_listings": taken from specifics_evidence (prefer values several listings agree on).
   * "part_number_knowledge": you know it for certain about this exact OEM part number (e.g.
     interchange/superseded numbers, mirror features like heated/power-folding, material, type).
-  Set confidence honestly; only "high" knowledge values are used.
+  Set confidence honestly: "high" = certain, "medium" = very likely for this exact part number
+  (used), "low" = a guess (not used).
 - Attributes that can differ between two copies of the same part - Color, Condition, Warranty,
   Items Included, Custom Bundle, Modified Item - must come ONLY from this listing's own text.
+- Weight and size specifics (Item Weight, any "... Weight", Dimensions, Item Length/Width/Height) only
+  from this listing's own text - never from other listings or your knowledge.
 - Never contradict this listing (position, side, condition). Leave an aspect out if unsure.
   "Does Not Apply" only for Brand/MPN when the item is genuinely unbranded / has no part number.
 - For SELECTION_ONLY aspects use one of the allowed values exactly as written; use the exact aspect
@@ -122,7 +137,9 @@ Compatibility / fitment (vehicle parts only):
 
 Shipping:
 - shipping_estimate: estimate the PACKED shipment for this exact part as it would ship (part plus
-  box/padding): weight_kg and the box length_cm, width_cm, height_cm. Use the part type, size and
+  box/padding): weight_kg and the box length_cm, width_cm, height_cm. Base it on what the part
+  physically is (identify it from the part number and title); do not trust weights quoted by other
+  sellers, they are often wrong. Use the part type, size and
   material (e.g. a car door shell or bumper ships in a large box; a sensor in a small one), and any
   weight/size stated in the listing. If the listing's package details are given, they win - copy
   them. basis = one short sentence on how you estimated; confidence honest. If you truly can't
@@ -251,13 +268,13 @@ export function missingAspectsForPrompt(aspects: Aspect[], existing: Record<stri
   return aspects
     .filter((a) => !have.has(a.name.toLowerCase()))
     .sort((a, b) => rank(a) - rank(b))
-    .slice(0, 60)
+    .slice(0, 100)
     .map((a) => ({
       name: a.name,
       importance: a.required ? "REQUIRED" : a.usage === "RECOMMENDED" ? "RECOMMENDED" : "OPTIONAL",
       mode: a.mode,
       multi_value: a.multi,
-      allowed_values: a.values.slice(0, a.mode === "SELECTION_ONLY" ? 60 : 10),
+      allowed_values: a.values.slice(0, a.mode === "SELECTION_ONLY" ? 200 : 15),
     }));
 }
 
