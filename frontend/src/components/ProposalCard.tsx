@@ -257,6 +257,26 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
           )}
           {(compat.length > 0 || p.fitment) && (
             <div className={cx(!newSpecs.length && "md:col-span-2")}>
+              {editable && compat.length > 0 && (
+                <label className="mb-2 flex cursor-pointer items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={Boolean(p.changes.compatibilityAdd?.length)}
+                    disabled={busy === "save"}
+                    onChange={(e) =>
+                      patch(
+                        { pushCompatibility: e.target.checked },
+                        e.target.checked ? `${compat.length} vehicles will be added on eBay` : "Fitment won't be pushed",
+                      )
+                    }
+                  />
+                  <span>
+                    <b>Push these {compat.length} vehicles to eBay</b>{" "}
+                    <span className="text-slate-500">(added to the listing's compatibility - existing vehicles are kept)</span>
+                  </span>
+                </label>
+              )}
               <FitmentPanel rows={compat} fitment={p.fitment} pushing={Boolean(p.changes.compatibilityAdd?.length)} />
             </div>
           )}

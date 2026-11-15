@@ -136,7 +136,7 @@ test("sync + review-mode batch + approve + push + revert", async () => {
   assert.equal(p1!.changes.price, undefined, "no cost -> no price decrease");
   assert.equal(p2!.changes.price, 39.88, "cost 30 -> floored at 39.88");
   assert.deepEqual(p1!.changes.itemSpecifics, { Brand: ["Acme"], "Manufacturer Part Number": ["AC-555"] });
-  assert.equal(p1!.changes.compatibilityAdd, undefined, "fitment report-only by default");
+  assert.deepEqual(p1!.changes.compatibilityAdd, [{ Year: "2016", Make: "Honda", Model: "Civic" }], "fitment pushed by default");
   assert.equal(p1!.suggestion.suggested_compatibility_rows.length, 1);
 
   // API: list batch, edit + approve one, reject another

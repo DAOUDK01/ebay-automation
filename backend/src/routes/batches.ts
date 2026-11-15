@@ -1,4 +1,6 @@
 import { Router } from "express";
+import type { FitmentRow } from "../lib/ebay/types";
+import { toCompatRows } from "../lib/fitment";
 import { z } from "zod";
 import { loadStore } from "../middleware/auth";
 import { HttpError, parseBody } from "../middleware/error";
@@ -75,6 +77,8 @@ const editSchema = z.object({
   status: z.enum(["approved", "rejected", "proposed"]).optional(),
   title: z.string().max(80).nullable().optional(),
   price: z.number().positive().nullable().optional(),
+  /** true = push the vehicles the optimizer found (adds to eBay's list, never replaces); false = don't */
+  pushCompatibility: z.boolean().optional(),
 });
 
 proposalsRouter.patch("/:proposalId", async (req, res) => {
@@ -94,6 +98,11 @@ proposalsRouter.patch("/:proposalId", async (req, res) => {
   if (body.price !== undefined) {
     if (body.price) changes.price = Math.round(body.price * 100) / 100;
     else delete changes.price;
+  }
+  if (body.pushCompatibility !== undefined) {
+    const rows = ((p.suggestion as any)?.suggested_compatibility_rows ?? []) as FitmentRow[];
+    if (body.pushCompatibility && rows.length) changes.compatibilityAdd = toCompatRows(rows);
+    else delete changes.compatibilityAdd;
   }
   p.changes = changes;
   p.markModified("changes");

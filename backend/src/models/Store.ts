@@ -129,7 +129,7 @@ export const DEFAULT_SETTINGS: StoreSettings = {
     specifics: { enabled: true, overwriteExisting: false, useOtherListings: true, allowKnowledge: true, allowCustomNames: true },
     shipping: { enabled: true, apply: false, divisor: 5000, minKg: 3, maxKg: 60, useEstimates: true },
     description: DEFAULT_DESCRIPTION(),
-    compatibility: { enabled: true, apply: false, researchEbay: true, allowKnowledge: true, minListings: 2, maxReferenceListings: 5 },
+    compatibility: { enabled: true, apply: true, researchEbay: true, allowKnowledge: true, minListings: 2, maxReferenceListings: 5 },
   },
 };
 

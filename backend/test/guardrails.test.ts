@@ -142,12 +142,13 @@ test("specifics: other listings, part-number knowledge, custom part-number names
   assert.equal(Object.keys(capped.value!).length, 45);
 });
 
-test("compatibility: report-only by default; push strips internal fields", () => {
+test("compatibility: pushed by default; report-only when apply is off; push strips internal fields", () => {
   const rows = [
     { Year: "2017", Make: "Honda", Model: "Civic", Trim: "EX", Engine: "2.0L", _source: "ebay_listings" as const, _support: "3" },
     { Year: "2018", Make: "Honda", Model: "Civic", _source: "part_number_knowledge" as const, _support: "" },
   ];
-  const r = checkCompatibility(rows, DEFAULT_SETTINGS.modules.compatibility);
+  assert.equal(DEFAULT_SETTINGS.modules.compatibility.apply, true);
+  const r = checkCompatibility(rows, { ...DEFAULT_SETTINGS.modules.compatibility, apply: false });
   assert.equal(r.value, null);
   assert.equal(r.suggested.length, 2);
   assert.match(r.note, /1 from other eBay listings, 1 from part-number knowledge\) - report only/);
