@@ -173,6 +173,8 @@ export interface ShippingPolicy {
   id: string;
   name: string;
   kg: number | null;
+  parts?: string[];
+  copy?: boolean;
 }
 
 export interface ShippingAnalysis {

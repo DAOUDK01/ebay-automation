@@ -90,11 +90,17 @@ export interface ShippingPolicy {
   name: string;
   /** weight bracket parsed from the policy name, e.g. "Ground 7 KG" -> 7 */
   kg: number | null;
+  /** part words from the name, e.g. "BLAP Engine policy" -> ["engine"]; such policies are used for that part */
+  parts?: string[];
+  /** eBay duplicate ("... Copy (3)") - never suggested */
+  copy?: boolean;
 }
 
 export interface ShippingAnalysis {
   /** where weight/size came from */
   source: "listing" | "estimate" | "none";
+  /** "part" = a policy named after this part (e.g. Engine) was chosen; "weight" = weight bracket */
+  rule?: "part" | "weight";
   confidence?: string;
   basis?: string;
   package?: PackageDetails;

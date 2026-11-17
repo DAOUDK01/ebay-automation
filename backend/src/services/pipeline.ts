@@ -146,7 +146,8 @@ export function buildChanges(
   if (shipping && s.modules.shipping.enabled) {
     notes.push(`shipping: ${shipping.note}`);
     // switch policy only when we're confident which bracket is right
-    const confident = shipping.source === "listing" || shipping.confidence !== "low";
+    // part-name policies come from the title, so they don't depend on the weight estimate
+    const confident = shipping.rule === "part" || shipping.source === "listing" || shipping.confidence !== "low";
     if (s.modules.shipping.apply && shipping.suggested && !shipping.matches && !shipping.overMax && confident && shipping.suggested.id) {
       changes.shippingPolicyId = shipping.suggested.id;
     }

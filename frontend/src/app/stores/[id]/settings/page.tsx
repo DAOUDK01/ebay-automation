@@ -34,8 +34,11 @@ function PolicyList({ storeId }: { storeId: string }) {
   const { data, error, isLoading, mutate } = useSWR<{ policies: ShippingPolicy[] }>(`/stores/${storeId}/shipping-policies`, fetcher, {
     revalidateOnFocus: false,
   });
-  const brackets = (data?.policies ?? []).filter((p) => p.kg !== null).sort((a, b) => a.kg! - b.kg!);
-  const other = (data?.policies ?? []).filter((p) => p.kg === null);
+  const all = data?.policies ?? [];
+  const brackets = all.filter((p) => p.kg !== null && !p.copy && !p.parts?.length).sort((a, b) => a.kg! - b.kg!);
+  const partPolicies = all.filter((p) => !p.copy && p.parts?.length);
+  const copies = all.filter((p) => p.copy);
+  const other = all.filter((p) => !p.copy && !p.parts?.length && p.kg === null);
   return (
     <div className="ml-11 rounded-lg border border-slate-200 p-3">
       <div className="mb-2 flex items-center justify-between">
@@ -64,9 +67,24 @@ function PolicyList({ storeId }: { storeId: string }) {
           ) : (
             <p className="text-sm text-amber-700">No weight-based policies found. Policy names must include the weight, e.g. &quot;Ground 7 KG&quot;.</p>
           )}
+          {partPolicies.length > 0 && (
+            <div className="mt-3">
+              <div className="mb-1 text-xs font-semibold text-slate-600">Part policies - used for that part, whatever the weight</div>
+              <div className="flex flex-wrap gap-1.5">
+                {partPolicies.map((p) => (
+                  <span key={p.id} className="rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs" title={p.name}>
+                    <b className="capitalize">{p.parts!.join(" ")}</b> <span className="text-slate-500">· {p.name}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {copies.length > 0 && (
+            <p className="mt-2 text-xs text-slate-500">Ignored copies (never suggested): {copies.map((p) => p.name).join(", ")}</p>
+          )}
           {other.length > 0 && (
             <p className="mt-2 text-xs text-slate-500">
-              Ignored (no kg in the name): {other.map((p) => p.name).join(", ")}
+              Ignored (no kg or part name): {other.map((p) => p.name).join(", ")}
             </p>
           )}
         </>

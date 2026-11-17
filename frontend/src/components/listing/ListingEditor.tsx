@@ -94,7 +94,10 @@ export function ListingEditor({
     heightCm: Number(pkg.heightCm) || 0,
   };
   const weights = computeWeights(pkgNum, shippingSettings.divisor, shippingSettings.minKg);
-  const suggestedPolicy = pkgNum.weightKg > 0 ? pickPolicy(shippingPolicies, weights.categoryKg) : null;
+  const currentPolicy = shippingPolicies.find((p) => p.id === (item.shipping?.policyId ?? "")) ?? null;
+  // a part-name policy (e.g. "Engine") only needs the title; weight brackets need a weight
+  const suggestedPolicy =
+    pickPolicy(shippingPolicies, weights.categoryKg, title, currentPolicy, pkgNum.weightKg > 0) ?? null;
   const origPkg = pkgToForm(item.shipping?.package);
 
   const original = useMemo(() => new Set((item.compatibilityAll ?? []).map(rowKey)), [item]);

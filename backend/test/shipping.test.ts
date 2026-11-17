@@ -108,3 +108,53 @@ test("revise XML + manual edits for shipping policy and package", () => {
   assert.equal(c.packageDetails?.weightKg, 5);
   assert.throws(() => computeManualChanges(before, { packageDetails: { weightKg: 0, lengthCm: 1, widthCm: 1, heightCm: 1 } }), /weight/);
 });
+
+// the store's real naming: shared "BLAP" prefix, eBay "Copy (n)" duplicates, part-name policies
+const BLAP = withKg([
+  ...[1, 2, 3, 5, 7, 10, 15, 20, 30, 40, 60].map((k) => ({ id: `B${k}`, name: `BLAP shipping policy ${k} KG` })),
+  { id: "B3c", name: "BLAP shipping policy 3 KG Copy (3)" },
+  { id: "B5c", name: "BLAP shipping policy 5 KG Copy" },
+  { id: "ENG", name: "BLAP Engine shipping policy" },
+  { id: "HL", name: "BLAP Headlight Policy" },
+  { id: "DOOR", name: "BLAP Door Shell policy 60 KG" },
+]);
+const listing = (title: string, pkg: any, policyId: string, policy: string) =>
+  ({ title, shipping: { options: [], dispatchDays: "2", policy, policyId, location: "", package: pkg } }) as any;
+
+test("policies: copies ignored, store prefix not a part, part words found", () => {
+  const by = (id: string) => BLAP.find((p) => p.id === id)!;
+  assert.equal(by("B3c").copy, true);
+  assert.deepEqual(by("B3").parts, [], "BLAP is shared by most names -> not a part word");
+  assert.deepEqual(by("ENG").parts, ["engine"]);
+  assert.deepEqual(by("HL").parts, ["headlight"]);
+  assert.deepEqual(by("DOOR").parts, ["door", "shell"]);
+});
+
+test("same weight bracket is correct - never switch to a Copy, no 'undercharging' message", () => {
+  const a = analyzeShipping(listing("Audi A4 Door Lock Cable 4H0837099B OEM Used", { weightKg: 0.25, lengthCm: 20, widthCm: 15, heightCm: 5 }, "B3", "BLAP shipping policy 3 KG"), undefined, BLAP, S);
+  assert.equal(a.suggested?.id, "B3");
+  assert.equal(a.matches, true);
+  assert.match(a.note, /^Correct policy/);
+  // currently on the 5 kg Copy -> suggest the real 3 kg policy, not "3 KG Copy (3)"
+  const b = analyzeShipping(listing("Audi A4 Door Lock Cable", { weightKg: 0.25, lengthCm: 20, widthCm: 15, heightCm: 5 }, "B5c", "BLAP shipping policy 5 KG Copy"), undefined, BLAP, S);
+  assert.equal(b.suggested?.id, "B3");
+  assert.match(b.note, /overcharged/);
+});
+
+test("part policies win over weight: engine -> Engine policy, headlights -> Headlight policy", () => {
+  const eng = analyzeShipping(listing("2015-2018 Ford F150 5.0L Engine Motor Assembly OEM Used", { weightKg: 180, lengthCm: 100, widthCm: 80, heightCm: 80 }, "B60", "BLAP shipping policy 60 KG"), undefined, BLAP, S);
+  assert.equal(eng.suggested?.id, "ENG");
+  assert.equal(eng.rule, "part");
+  assert.match(eng.note, /use the "BLAP Engine shipping policy" policy/);
+  const hl = analyzeShipping(listing("2016-2021 Honda Civic Left Headlights OEM Used", { weightKg: 4, lengthCm: 60, widthCm: 40, heightCm: 35 }, "HL", "BLAP Headlight Policy"), undefined, BLAP, S);
+  assert.equal(hl.suggested?.id, "HL");
+  assert.equal(hl.matches, true);
+  // "Door" alone is not enough for "Door Shell"
+  const door = analyzeShipping(listing("Audi A4 Front Left Door Lock Actuator", { weightKg: 0.8, lengthCm: 25, widthCm: 20, heightCm: 15 }, "B3", "BLAP shipping policy 3 KG"), undefined, BLAP, S);
+  assert.equal(door.rule, "weight");
+  assert.equal(door.suggested?.id, "B3");
+  // a part policy on a non-matching item is switched back to a weight bracket
+  const wrong = analyzeShipping(listing("Audi A4 Door Lock Actuator", { weightKg: 0.8, lengthCm: 25, widthCm: 20, heightCm: 15 }, "ENG", "BLAP Engine shipping policy"), undefined, BLAP, S);
+  assert.equal(wrong.suggested?.id, "B3");
+  assert.match(wrong.note, /for engine parts/);
+});
