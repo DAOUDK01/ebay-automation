@@ -158,3 +158,29 @@ test("part policies win over weight: engine -> Engine policy, headlights -> Head
   assert.equal(wrong.suggested?.id, "B3");
   assert.match(wrong.note, /for engine parts/);
 });
+
+test("heavy item over every policy: moved UP to the largest policy and pushed by default", async () => {
+  const { buildChanges } = await import("../src/services/pipeline");
+  const pols = withKg([3, 5, 10, 20, 30, 40, 60, 70].map((k) => ({ id: `P${k}`, name: `BLAP shipping policy ${k}kg` })));
+  const door = listing("2004-2016 Audi A4 Front Left Door Shell OEM Used", undefined, "P3", "BLAP shipping policy 3kg");
+  const est = { weight_kg: 22, length_cm: 130, width_cm: 90, height_cm: 40, basis: "door shell in a large box", confidence: "medium" as const };
+  const a = analyzeShipping(door, est, pols, S);
+  assert.equal(a.categoryKg, 94);
+  assert.equal(a.overMax, true, "over the 70 kg policy");
+  assert.equal(a.suggested?.id, "P70");
+  assert.match(a.note, /largest policy \(70 kg\) - moving to the 70 kg policy/);
+
+  const item = { ...door, itemId: "1", price: 100, currency: "USD", quantity: 1, quantitySold: 0, hasVariations: false, itemSpecifics: {}, variationNames: [], compatibilitySample: [] } as any;
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.modules.description.enabled = false;
+  assert.equal(settings.modules.shipping.apply, true, "switching is on by default");
+  const { changes } = buildChanges(item, { title: door.title, recommended_price: 0, item_specifics: [] } as any, [], null, settings, [], [], a);
+  assert.equal(changes.shippingPolicyId, "P70");
+
+  // already on the largest policy -> nothing to change; a 70 kg policy also lifts the 60 kg max
+  const on70 = analyzeShipping(listing(door.title, undefined, "P70", "BLAP shipping policy 70kg"), est, pols, S);
+  assert.equal(on70.matches, true);
+  const mid = analyzeShipping(listing(door.title, { weightKg: 65, lengthCm: 0, widthCm: 0, heightCm: 0 }, "P3", "x"), undefined, pols, S);
+  assert.equal(mid.overMax, false);
+  assert.equal(mid.suggested?.id, "P70");
+});

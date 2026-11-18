@@ -79,6 +79,8 @@ const editSchema = z.object({
   price: z.number().positive().nullable().optional(),
   /** true = push the vehicles the optimizer found (adds to eBay's list, never replaces); false = don't */
   pushCompatibility: z.boolean().optional(),
+  /** true = switch the listing to the suggested shipping policy; false = keep the current one */
+  pushShippingPolicy: z.boolean().optional(),
 });
 
 proposalsRouter.patch("/:proposalId", async (req, res) => {
@@ -103,6 +105,11 @@ proposalsRouter.patch("/:proposalId", async (req, res) => {
     const rows = ((p.suggestion as any)?.suggested_compatibility_rows ?? []) as FitmentRow[];
     if (body.pushCompatibility && rows.length) changes.compatibilityAdd = toCompatRows(rows);
     else delete changes.compatibilityAdd;
+  }
+  if (body.pushShippingPolicy !== undefined) {
+    const sug = (p as any).shipping?.suggested;
+    if (body.pushShippingPolicy && sug?.id) changes.shippingPolicyId = sug.id;
+    else delete changes.shippingPolicyId;
   }
   p.changes = changes;
   p.markModified("changes");

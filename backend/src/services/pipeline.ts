@@ -148,7 +148,10 @@ export function buildChanges(
     // switch policy only when we're confident which bracket is right
     // part-name policies come from the title, so they don't depend on the weight estimate
     const confident = shipping.rule === "part" || shipping.source === "listing" || shipping.confidence !== "low";
-    if (s.modules.shipping.apply && shipping.suggested && !shipping.matches && !shipping.overMax && confident && shipping.suggested.id) {
+    // too heavy for every policy: still move it UP to the largest policy (better than undercharging), never down
+    const heavyOk =
+      !shipping.overMax || (shipping.current?.kg != null && shipping.suggested?.kg != null && shipping.current.kg < shipping.suggested.kg);
+    if (s.modules.shipping.apply && shipping.suggested && !shipping.matches && heavyOk && confident && shipping.suggested.id) {
       changes.shippingPolicyId = shipping.suggested.id;
     }
   }

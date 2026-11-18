@@ -150,7 +150,10 @@ export function analyzeShipping(
   }
 
   const w = computeWeights(pkg, s.divisor, s.minKg);
-  const overMax = w.categoryKg > s.maxKg;
+  // the heaviest policy the store actually has counts as the maximum too (e.g. a 70 kg policy with max 60)
+  const maxPolicyKg = Math.max(0, ...weightBrackets(policies).map((p) => p.kg!));
+  const limitKg = Math.max(s.maxKg, maxPolicyKg);
+  const overMax = w.categoryKg > limitKg;
   const brackets = weightBrackets(policies);
   const partPolicy = partPolicyFor(policies, item.title ?? "");
   let suggested = pickPolicy(policies, w.categoryKg, item.title ?? "", current);
@@ -164,7 +167,11 @@ export function analyzeShipping(
       ? `Correct policy - "${partPolicy.name}" is the policy for this part`
       : `This is a ${partPolicy.parts!.join(" ")} - use the "${partPolicy.name}" policy`;
   } else if (!brackets.length) note = "No weight-based shipping policies found (policy names need a weight like '7 KG')";
-  else if (overMax) note = `Billable weight ${w.billableKg} kg is over your ${s.maxKg} kg maximum - consider freight`;
+  else if (overMax)
+    note =
+      suggested && current?.kg != null && suggested.kg != null && current.kg < suggested.kg
+        ? `Billable weight ${w.billableKg} kg is over your largest policy (${limitKg} kg) - moving to the ${suggested.kg} kg policy, consider freight`
+        : `Billable weight ${w.billableKg} kg is over your largest policy (${limitKg} kg) - consider freight`;
   else if (!suggested) note = `No policy for ${w.categoryKg} kg`;
   else if (matches) note = `Correct policy (${w.categoryKg} kg bracket)`;
   else if (current?.parts?.length) note = `Current policy is for ${current.parts.join(" ")} parts - this item should use the ${suggested.kg} kg policy`;

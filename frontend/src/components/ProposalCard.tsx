@@ -225,6 +225,26 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
       {p.shipping && (
         <div className="border-t border-slate-100 p-4">
           <ShippingPanel s={p.shipping} switching={Boolean(p.changes.shippingPolicyId)} />
+          {editable && p.shipping.suggested?.id && !p.shipping.matches && (
+            <label className="mt-3 flex cursor-pointer items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={Boolean(p.changes.shippingPolicyId)}
+                disabled={busy === "save"}
+                onChange={(e) =>
+                  patch(
+                    { pushShippingPolicy: e.target.checked },
+                    e.target.checked ? `Policy will change to ${p.shipping!.suggested!.name}` : "Shipping policy won't change",
+                  )
+                }
+              />
+              <span>
+                <b>Change the shipping policy on eBay</b> to <b>{p.shipping.suggested.name}</b>
+                {p.shipping.current?.name && <span className="text-slate-500"> (now: {p.shipping.current.name})</span>}
+              </span>
+            </label>
+          )}
         </div>
       )}
 

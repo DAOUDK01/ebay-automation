@@ -84,7 +84,7 @@ export const settingsSchema = z.object({
         maxKg: z.number().min(1).max(1000),
         useEstimates: z.boolean(),
       })
-      .default({ enabled: true, apply: false, divisor: 5000, minKg: 3, maxKg: 60, useEstimates: true }),
+      .default({ enabled: true, apply: true, divisor: 5000, minKg: 3, maxKg: 60, useEstimates: true }),
     description: descriptionSchema.optional(),
     compatibility: z.object({
       enabled: z.boolean(),
