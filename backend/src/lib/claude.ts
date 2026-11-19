@@ -31,6 +31,8 @@ export interface ClaudeSuggestion {
   }[];
   shipping_estimate: ShippingEstimate;
   shipping_notes: string;
+  /** name of the store's part shipping policy this item belongs to, or "" (weight bracket) */
+  shipping_part_policy?: string;
   description_content: DescriptionContent;
   other_notes: string;
   confidence: "low" | "medium" | "high";
@@ -144,6 +146,12 @@ Shipping:
   weight/size stated in the listing. If the listing's package details are given, they win - copy
   them. basis = one short sentence on how you estimated; confidence honest. If you truly can't
   tell, return zeros with confidence "low".
+- shipping_part_policy: "part_shipping_policies" (if present) are the store's shipping policies for
+  specific kinds of part. Return the exact policy name ONLY if this item IS that whole part (e.g. a
+  complete transmission/gearbox for a "Gear Box" policy, a complete engine for an "Engine" policy).
+  Return "" for accessories or pieces of it (transmission mount, control module, engine wiring harness,
+  headlight leveling motor) and for anything else - e.g. a "Liftgate Motor and Gear" is NOT a gear box.
+  Return "" when part_shipping_policies is absent.
 - shipping_notes: short advice if handling time or shipping cost looks uncompetitive versus
   competitors, else an empty string.
 
@@ -228,6 +236,7 @@ export const SUGGESTION_SCHEMA = {
       additionalProperties: false,
     },
     shipping_notes: { type: "string" },
+    shipping_part_policy: { type: "string" },
     description_content: {
       type: "object",
       properties: {
@@ -256,7 +265,7 @@ export const SUGGESTION_SCHEMA = {
   },
   required: [
     "title", "title_reason", "item_specifics", "recommended_price", "price_reason",
-    "compatibility", "shipping_estimate", "shipping_notes", "description_content", "other_notes", "confidence",
+    "compatibility", "shipping_estimate", "shipping_notes", "shipping_part_policy", "description_content", "other_notes", "confidence",
   ],
   additionalProperties: false,
 } as const;
@@ -287,6 +296,8 @@ export interface ClaudeOptions {
   titleTemplate?: string;
   /** include the current description text so the A+ content keeps its facts */
   wantDescription?: boolean;
+  /** the store's shipping policies named after a part type, e.g. { name: "Gear Box Shipping Policy", part: "transmission" } */
+  partPolicies?: { name: string; part: string }[];
 }
 
 export interface SuggestResult {
@@ -317,6 +328,7 @@ export async function suggestImprovements(
     ...(opts.titleTemplate?.trim() ? { store_title_format: opts.titleTemplate.trim() } : {}),
     listing,
     ...(opts.wantDescription && descriptionHtml ? { current_description_text: descriptionToText(descriptionHtml).slice(0, 4000) } : {}),
+    ...(opts.partPolicies?.length ? { part_shipping_policies: opts.partPolicies } : {}),
     missing_aspects: missingAspectsForPrompt(aspects, item.itemSpecifics),
     competitors: competitors.map(({ url: _u, ...c }) => c),
     ...(fitment?.partNumbers.length ? { part_numbers: fitment.partNumbers } : {}),

@@ -215,13 +215,29 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
   };
   const evidence = await gatherFitmentEvidence(item, fitDeps, s, (m) => logger.warn(`[${store.name}] ${itemId}: ${m}`));
 
+  // shipping policies first, so Claude can say whether this item belongs to a part policy (e.g. Gear Box)
+  let policies: ShippingPolicy[] = [];
+  if (s.modules.shipping.enabled) {
+    try {
+      policies = await getShippingPolicies(store, deps);
+    } catch (e: any) {
+      logger.warn(`[${store.name}] couldn't load shipping policies: ${e?.message ?? e}`);
+    }
+  }
+  const partPolicies = policies.filter((p) => !p.copy && p.parts?.length).map((p) => ({ name: p.name, part: p.parts![0] }));
+
   let result;
   try {
     result = await deps.suggest(
       item,
       aspects,
       competitors,
-      { ...s.claude, titleTemplate: s.modules.title.enabled ? s.modules.title.template : "", wantDescription: s.modules.description.enabled },
+      {
+        ...s.claude,
+        titleTemplate: s.modules.title.enabled ? s.modules.title.template : "",
+        wantDescription: s.modules.description.enabled,
+        partPolicies,
+      },
       {
         partNumbers: evidence.partNumbers,
         summary: evidence.summary,
@@ -239,13 +255,9 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
 
   let shipping: ShippingAnalysis | null = null;
   if (s.modules.shipping.enabled) {
-    let policies: ShippingPolicy[] = [];
-    try {
-      policies = await getShippingPolicies(store, deps);
-    } catch (e: any) {
-      logger.warn(`[${store.name}] couldn't load shipping policies: ${e?.message ?? e}`);
-    }
-    shipping = analyzeShipping(item, result.suggestion.shipping_estimate, policies, s.modules.shipping);
+    // Claude's answer (when it gave one) decides whether a part policy applies
+    const said = partPolicies.length ? result.suggestion.shipping_part_policy : undefined;
+    shipping = analyzeShipping(item, result.suggestion.shipping_estimate, policies, s.modules.shipping, said);
   }
 
   const listing = await Listing.findOne({ storeId: store._id, itemId }).lean();

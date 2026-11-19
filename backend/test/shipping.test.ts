@@ -127,7 +127,7 @@ test("policies: copies ignored, store prefix not a part, part words found", () =
   assert.deepEqual(by("B3").parts, [], "BLAP is shared by most names -> not a part word");
   assert.deepEqual(by("ENG").parts, ["engine"]);
   assert.deepEqual(by("HL").parts, ["headlight"]);
-  assert.deepEqual(by("DOOR").parts, ["door", "shell"]);
+  assert.deepEqual(by("DOOR").parts, ["door shell"]);
 });
 
 test("same weight bracket is correct - never switch to a Copy, no 'undercharging' message", () => {
@@ -183,4 +183,27 @@ test("heavy item over every policy: moved UP to the largest policy and pushed by
   const mid = analyzeShipping(listing(door.title, { weightKg: 65, lengthCm: 0, widthCm: 0, heightCm: 0 }, "P3", "x"), undefined, pols, S);
   assert.equal(mid.overMax, false);
   assert.equal(mid.suggested?.id, "P70");
+});
+
+test("Gear Box policy is for transmissions only - not a liftgate motor & gear, not a mount or TCM", () => {
+  const pols = withKg([
+    ...[3, 5, 10, 20, 30].map((k) => ({ id: `B${k}`, name: `BLAP shipping policy ${k} KG` })),
+    { id: "GB", name: "Gear Box Shipping Policy" },
+  ]);
+  assert.deepEqual(pols.find((p) => p.id === "GB")!.parts, ["transmission"]);
+  const pkg = { weightKg: 5, lengthCm: 40, widthCm: 30, heightCm: 22 };
+  const at = (title: string, claude?: string) => analyzeShipping(listing(title, pkg, "B10", "BLAP shipping policy 10 KG"), undefined, pols, S, claude);
+
+  const liftgate = at("2015 Jeep Grand Cherokee Power Liftgate Motor and Gear 68231347AA OEM Used");
+  assert.equal(liftgate.rule, "weight");
+  assert.equal(liftgate.suggested?.id, "B10", "6 kg item -> 10 kg bracket stays");
+  assert.equal(at("2012 Ford F150 6R80 Transmission Mount OEM").rule, "weight");
+  assert.equal(at("2010 Audi A4 Transmission Control Module TCM").rule, "weight");
+  assert.equal(at("2014 Jeep Cherokee 9 Speed Automatic Transmission Assembly OEM").suggested?.id, "GB");
+  assert.equal(at("Honda Civic Gearbox Manual 6 Speed").suggested?.id, "GB");
+
+  // the answer from Claude wins: "" keeps the weight bracket even if a word matches; a name selects the policy
+  assert.equal(at("2014 Jeep Cherokee Transmission Assembly", "").rule, "weight");
+  assert.equal(at("2016 Ford F150 6R80 Trans Assy 4x4", "Gear Box Shipping Policy").suggested?.id, "GB");
+  assert.equal(at("Liftgate Motor and Gear", "Made Up Policy").rule, "weight", "unknown names ignored");
 });
