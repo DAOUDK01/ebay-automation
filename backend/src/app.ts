@@ -11,6 +11,7 @@ import { batchesRouter, proposalsRouter } from "./routes/batches";
 import ebayRoutes from "./routes/ebay";
 import listingRoutes from "./routes/listings";
 import storeRoutes from "./routes/stores";
+import { mountModules } from "./modules";
 
 export function createApp() {
   const app = express();
@@ -29,6 +30,7 @@ export function createApp() {
   app.use("/api/stores/:storeId/listings", requireAuth, listingRoutes);
   app.use("/api/stores/:storeId/batches", requireAuth, batchesRouter);
   app.use("/api/stores/:storeId/proposals", requireAuth, proposalsRouter);
+  mountModules(app); // orders, returns, messages, ... (src/modules/*)
   app.use("/api/stores", requireAuth, storeRoutes);
 
   app.use(notFound);

@@ -31,7 +31,7 @@ export interface PipelineDeps {
 export function defaultDeps(store: StoreDocument): PipelineDeps {
   const refresh = decrypt(store.auth.refreshTokenEnc);
   return {
-    trading: new TradingClient(() => userAccessToken(String(store._id), refresh), store.siteId),
+    trading: new TradingClient(() => userAccessToken(String(store._id), refresh, store.auth.scopes), store.siteId),
     rest: new RestClient(store.marketplaceId),
     suggest: suggestImprovements,
     sleep,

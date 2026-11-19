@@ -13,6 +13,11 @@ import { cancelPending, enqueue } from "../services/jobs";
 import { defaultDeps, getShippingPolicies } from "../services/pipeline";
 import { renderAplus } from "../lib/description";
 import { descriptionSchema, settingsSchema } from "./settingsSchema";
+import { missingScopes, SCOPE_FEATURES } from "../lib/ebay/auth";
+import { SyncState } from "../models/SyncState";
+import { MODULES } from "../modules";
+import { MODULE_KEYS } from "../modules/types";
+import { countsFor, syncableModules } from "../services/accountSync";
 
 const router = Router();
 
@@ -46,6 +51,8 @@ function publicStore(store: StoreDocument) {
     runner: store.runner,
     lastSyncAt: store.lastSyncAt,
     tokenExpiresAt: store.auth?.refreshTokenExpiresAt,
+    /** features this account can't use until it is reconnected (new eBay permissions) */
+    missingFeatures: [...new Set(missingScopes(store.auth?.scopes).map((s) => SCOPE_FEATURES[s]).filter(Boolean))],
     createdAt: (store as any).createdAt,
   };
 }
@@ -53,7 +60,9 @@ function publicStore(store: StoreDocument) {
 router.get("/", async (req, res) => {
   const stores = (await Store.find({ userId: req.userId }).sort({ createdAt: 1 })) as StoreDocument[];
   res.json({
-    stores: await Promise.all(stores.map(async (s) => ({ ...publicStore(s), stats: await storeStats(s._id) }))),
+    stores: await Promise.all(
+      stores.map(async (s) => ({ ...publicStore(s), stats: await storeStats(s._id), counts: await countsFor(s) })),
+    ),
   });
 });
 
@@ -221,6 +230,45 @@ router.post("/:id/description-preview", async (req, res) => {
     related: others.slice(1, 1 + brand.relatedCount),
   });
   res.json({ html });
+});
+
+/** Sidebar badges / overview numbers from every built module (orders awaiting shipment, unread messages, ...). */
+router.get("/:id/counts", async (req, res) => {
+  const store = await loadStore(req);
+  res.json({ counts: await countsFor(store) });
+});
+
+/** Background refresh status per module. */
+router.get("/:id/account-sync", async (req, res) => {
+  const store = await loadStore(req);
+  const states = await SyncState.find({ storeId: store._id }).lean();
+  const runnable = new Set(syncableModules(store).map((x) => x.module.key));
+  res.json({
+    lastScheduledAt: store.accountSyncAt ?? null,
+    modules: MODULES.map((m) => {
+      const st = states.find((x) => x.module === m.key);
+      return {
+        key: m.key,
+        label: m.label,
+        ready: m.ready,
+        syncs: runnable.has(m.key),
+        lastRunAt: st?.lastRunAt ?? null,
+        lastSuccessAt: st?.lastSuccessAt ?? null,
+        summary: st?.summary ?? "",
+        error: st?.error ?? "",
+      };
+    }),
+  });
+});
+
+/** Refresh now (all modules, or ?module=orders). */
+router.post("/:id/account-sync", async (req, res) => {
+  const store = await loadStore(req);
+  const one = String(req.query.module ?? "");
+  if (one && !(MODULE_KEYS as readonly string[]).includes(one)) throw new HttpError(400, "Unknown module");
+  if (!syncableModules(store, one ? [one as any] : undefined).length) throw new HttpError(400, "Nothing to sync yet - these features are still being built");
+  const { job, duplicate } = await enqueue(store._id, "account_sync", { trigger: "manual", ...(one ? { modules: [one] } : {}) });
+  res.status(202).json({ job, duplicate });
 });
 
 router.get("/:id/jobs", async (req, res) => {

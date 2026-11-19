@@ -8,7 +8,32 @@ import { AppShell } from "@/components/AppShell";
 import { toast } from "@/components/toast";
 import { Alert, Badge, Button, Card, Empty, Spinner } from "@/components/ui";
 import { api, fetcher, money, timeAgo } from "@/lib/api";
-import type { Store } from "@/lib/types";
+import type { Counts, Store } from "@/lib/types";
+
+/** Business numbers shown for each account and in total ("—" until that module is built / synced). */
+const KPIS: { key: keyof Counts; label: string; money?: boolean; alert?: boolean }[] = [
+  { key: "salesToday", label: "sales today", money: true },
+  { key: "awaitingShipment", label: "to ship", alert: true },
+  { key: "unreadMessages", label: "unread", alert: true },
+  { key: "openReturns", label: "returns", alert: true },
+  { key: "availableFunds", label: "funds", money: true },
+];
+
+function kpiValue(c: Counts | undefined, k: (typeof KPIS)[number]) {
+  const v = c?.[k.key];
+  if (typeof v !== "number") return "—";
+  return k.money ? money(v, c?.currency) : String(v);
+}
+
+function totals(stores: Store[]): Counts {
+  const t: Counts = {};
+  for (const k of KPIS) {
+    const vals = stores.map((s) => s.counts?.[k.key]).filter((v): v is number => typeof v === "number");
+    (t as any)[k.key] = vals.length ? vals.reduce((a, b) => a + b, 0) : null;
+  }
+  t.currency = stores.find((s) => s.counts?.currency)?.counts?.currency;
+  return t;
+}
 
 function StoresInner() {
   const params = useSearchParams();
@@ -61,7 +86,7 @@ function StoresInner() {
           </span>
           <div>
             <h1 className="text-xl font-semibold text-slate-900">Your eBay stores</h1>
-            <p className="text-sm text-slate-500">Connect a seller account, then manage everything for that store from the sidebar.</p>
+            <p className="text-sm text-slate-500">All your eBay accounts in one place. Pick one to manage its orders, listings, messages and money.</p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -98,6 +123,17 @@ function StoresInner() {
       ) : !data?.stores.length ? (
         <Empty title="No eBay accounts connected yet">Click “Connect eBay account” and sign in to eBay to grant access.</Empty>
       ) : (
+        <>
+        {data.stores.length > 1 && (
+          <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-5">
+            {KPIS.map((k) => (
+              <div key={k.key}>
+                <div className="text-xs uppercase tracking-wide text-slate-500">All accounts · {k.label}</div>
+                <div className="text-xl font-semibold text-slate-900">{kpiValue(totals(data.stores), k)}</div>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {data.stores.map((s) => (
             <Link
@@ -128,6 +164,21 @@ function StoresInner() {
                   <div className="text-xs text-slate-500">to review</div>
                 </div>
               </div>
+              <div className="mt-3 grid grid-cols-5 gap-1 rounded-lg bg-slate-50 p-2 text-center">
+                {KPIS.map((k) => {
+                  const v = s.counts?.[k.key];
+                  const hot = k.alert && typeof v === "number" && v > 0;
+                  return (
+                    <div key={k.key}>
+                      <div className={hot ? "text-sm font-semibold text-rose-600" : "text-sm font-semibold text-slate-800"}>{kpiValue(s.counts, k)}</div>
+                      <div className="text-[10px] text-slate-500">{k.label}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              {!!s.missingFeatures?.length && (
+                <div className="mt-2 text-xs text-amber-700">Reconnect needed for {s.missingFeatures.join(", ")}</div>
+              )}
               <div className="mt-4 flex justify-between text-xs text-slate-500">
                 <span>Mode: {s.settings.mode}</span>
                 <span>
@@ -138,6 +189,7 @@ function StoresInner() {
             </Link>
           ))}
         </div>
+        </>
       )}
     </div>
   );

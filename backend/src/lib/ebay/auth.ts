@@ -1,11 +1,29 @@
 import { env } from "../../config/env";
 
+const SCOPE = (s = "") => `https://api.ebay.com/oauth/api_scope${s ? `/${s}` : ""}`;
+
+/** Scopes accounts connected before full account management were granted. */
+export const LEGACY_SCOPES = [SCOPE(), SCOPE("sell.inventory"), SCOPE("sell.account"), SCOPE("sell.analytics.readonly")];
+
+/** Everything the app asks for when an account connects (or reconnects). */
 export const USER_SCOPES = [
-  "https://api.ebay.com/oauth/api_scope",
-  "https://api.ebay.com/oauth/api_scope/sell.inventory",
-  "https://api.ebay.com/oauth/api_scope/sell.account",
-  "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
+  ...LEGACY_SCOPES,
+  SCOPE("sell.fulfillment"), // orders, tracking, refunds
+  SCOPE("sell.finances"), // payouts, transactions, fees
+  SCOPE("sell.marketing"), // promoted listings, markdowns
+  SCOPE("commerce.identity.readonly"), // account details
 ];
+
+/** Which features need which scope - drives the "reconnect to enable ..." banner. */
+export const SCOPE_FEATURES: Record<string, string> = {
+  [SCOPE("sell.fulfillment")]: "Orders & shipping",
+  [SCOPE("sell.finances")]: "Finances & payouts",
+  [SCOPE("sell.marketing")]: "Promotions",
+  [SCOPE("commerce.identity.readonly")]: "Account details",
+};
+
+/** Scopes this app needs that the account hasn't granted yet (empty = all good). */
+export const missingScopes = (granted: string[] | undefined) => USER_SCOPES.filter((s) => !(granted ?? LEGACY_SCOPES).includes(s));
 const APP_SCOPES = ["https://api.ebay.com/oauth/api_scope"];
 
 interface TokenResponse {
@@ -62,10 +80,15 @@ export async function exchangeCode(code: string) {
 const userTokenCache = new Map<string, { token: string; exp: number }>();
 let appTokenCache: { token: string; exp: number } | null = null;
 
-export async function userAccessToken(cacheKey: string, refreshToken: string): Promise<string> {
+/**
+ * Access token for a connected account. Refresh with the scopes THIS account granted - asking for more than
+ * the refresh token carries makes eBay reject the request (accounts connected before new scopes were added).
+ */
+export async function userAccessToken(cacheKey: string, refreshToken: string, granted?: string[]): Promise<string> {
   const c = userTokenCache.get(cacheKey);
   if (c && Date.now() < c.exp - 120_000) return c.token;
-  const t = await tokenRequest({ grant_type: "refresh_token", refresh_token: refreshToken, scope: USER_SCOPES.join(" ") });
+  const scopes = granted?.length ? granted : LEGACY_SCOPES;
+  const t = await tokenRequest({ grant_type: "refresh_token", refresh_token: refreshToken, scope: scopes.join(" ") });
   userTokenCache.set(cacheKey, { token: t.access_token, exp: Date.now() + t.expires_in * 1000 });
   return t.access_token;
 }

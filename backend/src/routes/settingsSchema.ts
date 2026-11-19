@@ -36,6 +36,7 @@ export const settingsSchema = z.object({
   gapBetweenBatchesMin: z.number().min(1).max(10080),
   cooldownDays: z.number().int().min(1).max(365),
   resyncHours: z.number().min(1).max(168),
+  accountSync: z.object({ enabled: z.boolean(), everyMin: z.number().int().min(5).max(1440) }).default({ enabled: true, everyMin: 15 }),
   activeHours: z.object({
     enabled: z.boolean(),
     start: hhmm,

@@ -9,6 +9,8 @@ export interface StoreSettings {
   gapBetweenBatchesMin: number;
   cooldownDays: number;
   resyncHours: number;
+  /** background refresh of orders, messages, returns, finances... (independent of the optimizer runner) */
+  accountSync: { enabled: boolean; everyMin: number };
   activeHours: { enabled: boolean; start: string; end: string; timezone: string };
   competitorCount: number;
   excludeSeller: string;
@@ -106,6 +108,7 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   gapBetweenBatchesMin: 60,
   cooldownDays: 21,
   resyncHours: 12,
+  accountSync: { enabled: true, everyMin: 15 },
   activeHours: { enabled: true, start: "08:00", end: "23:00", timezone: "America/New_York" },
   competitorCount: 15,
   excludeSeller: "",
@@ -179,6 +182,8 @@ const storeSchema = new Schema(
       lastError: { type: String, default: "" },
     },
     lastSyncAt: Date,
+    /** last time account_sync was scheduled (orders, messages, ...) */
+    accountSyncAt: Date,
   },
   { timestamps: true, minimize: false },
 );
@@ -195,6 +200,7 @@ export type StoreDocument = HydratedDocument<{
   settings: StoreSettings;
   runner: { enabled: boolean; nextRunAt?: Date; lastBatchAt?: Date; lastError: string };
   lastSyncAt?: Date;
+  accountSyncAt?: Date;
 }>;
 
 /** Merge saved settings over defaults so newly added settings always have a value. */

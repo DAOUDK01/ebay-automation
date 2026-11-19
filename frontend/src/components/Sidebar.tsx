@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { api, fetcher } from "@/lib/api";
 import { GLOBAL_NAV, STORE_NAV, isActive, storeHref, type NavItem } from "@/lib/nav";
-import type { Store, User } from "@/lib/types";
+import type { Counts, ModuleInfo, Store, User } from "@/lib/types";
 import { cx } from "./ui";
 
 interface SidebarProps {
@@ -20,6 +20,15 @@ interface SidebarProps {
 
 export function Sidebar({ user, storeId, collapsed, onToggleCollapsed, mobileOpen, onCloseMobile }: SidebarProps) {
   const pathname = usePathname();
+  // which account modules are built (backend src/modules) and the badge numbers for this store
+  const { data: mods } = useSWR<{ modules: ModuleInfo[] }>("/modules", fetcher, { revalidateOnFocus: false });
+  const { data: cnt } = useSWR<{ counts: Counts }>(storeId ? `/stores/${storeId}/counts` : null, fetcher, { refreshInterval: 60_000 });
+  const ready = new Set((mods?.modules ?? []).filter((m) => m.ready).map((m) => m.key));
+  const resolve = (item: NavItem): { item: NavItem; badge?: number } => {
+    const soon = item.soon || (item.module ? !ready.has(item.module) : false);
+    const n = item.badge ? cnt?.counts?.[item.badge] : undefined;
+    return { item: { ...item, soon }, badge: !soon && typeof n === "number" && n > 0 ? n : undefined };
+  };
 
   // close the mobile drawer on navigation
   useEffect(() => {
@@ -67,11 +76,14 @@ export function Sidebar({ user, storeId, collapsed, onToggleCollapsed, mobileOpe
                 )}
                 {mini && <div className="mx-3 mb-2 border-t border-white/10 first:hidden" />}
                 <ul className="space-y-0.5 px-2">
-                  {section.items.map((item) => (
-                    <li key={item.label}>
-                      <NavLink item={item} href={storeHref(storeId, item.path)} active={isActive(pathname, storeId, item.path)} mini={mini} />
-                    </li>
-                  ))}
+                  {section.items.map((raw) => {
+                    const { item, badge } = resolve(raw);
+                    return (
+                      <li key={item.label}>
+                        <NavLink item={item} href={storeHref(storeId, item.path)} active={isActive(pathname, storeId, item.path)} mini={mini} badge={badge} />
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             ))
@@ -135,7 +147,7 @@ export function Sidebar({ user, storeId, collapsed, onToggleCollapsed, mobileOpe
   );
 }
 
-function NavLink({ item, href, active, mini }: { item: NavItem; href: string; active: boolean; mini: boolean }) {
+function NavLink({ item, href, active, mini, badge }: { item: NavItem; href: string; active: boolean; mini: boolean; badge?: number }) {
   const Icon = item.icon;
   const base = cx(
     "group relative flex items-center gap-3 rounded-md text-sm font-medium transition",
@@ -164,6 +176,14 @@ function NavLink({ item, href, active, mini }: { item: NavItem; href: string; ac
     >
       <Icon className="h-[18px] w-[18px] shrink-0" />
       {!mini && <span className="truncate">{item.label}</span>}
+      {badge !== undefined &&
+        (mini ? (
+          <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-rose-500" />
+        ) : (
+          <span className="ml-auto rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+            {badge > 99 ? "99+" : badge}
+          </span>
+        ))}
     </Link>
   );
 }

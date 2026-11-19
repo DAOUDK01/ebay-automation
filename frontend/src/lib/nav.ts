@@ -17,9 +17,11 @@ import {
   Store,
   Truck,
   Undo2,
+  Wallet,
   WandSparkles,
   type LucideIcon,
 } from "lucide-react";
+import type { Counts } from "./types";
 
 export interface NavItem {
   label: string;
@@ -28,6 +30,10 @@ export interface NavItem {
   path: string;
   /** feature not built yet - shown greyed out with a "Soon" tag */
   soon?: boolean;
+  /** account module behind this page (backend src/modules/<key>); "Soon" until the backend says it's ready */
+  module?: string;
+  /** Counts field shown as a badge, e.g. "awaitingShipment" */
+  badge?: keyof Counts;
   description?: string;
 }
 
@@ -52,24 +58,25 @@ export const STORE_NAV: NavSection[] = [
   {
     title: "Sales",
     items: [
-      { label: "Orders", icon: ShoppingCart, path: "orders", soon: true },
-      { label: "Returns & cases", icon: Undo2, path: "returns", soon: true },
-      { label: "Messages", icon: MessageSquare, path: "messages", soon: true },
-      { label: "Feedback", icon: Star, path: "feedback", soon: true },
+      { label: "Orders", icon: ShoppingCart, path: "orders", module: "orders", badge: "awaitingShipment", description: "Orders, tracking and refunds" },
+      { label: "Returns & cases", icon: Undo2, path: "returns", module: "returns", badge: "openReturns", description: "Returns, cancellations and cases" },
+      { label: "Messages", icon: MessageSquare, path: "messages", module: "messages", badge: "unreadMessages", description: "Buyer messages" },
+      { label: "Feedback", icon: Star, path: "feedback", module: "feedback", badge: "negativeFeedback", description: "Feedback received and left" },
+      { label: "Finances", icon: Wallet, path: "finances", module: "finances", description: "Funds, payouts, fees and profit" },
     ],
   },
   {
     title: "Growth",
     items: [
-      { label: "Promotions", icon: Megaphone, path: "promotions", soon: true },
-      { label: "Analytics", icon: BarChart3, path: "analytics", soon: true },
+      { label: "Promotions", icon: Megaphone, path: "promotions", module: "promotions", description: "Promoted listings and sales" },
+      { label: "Analytics", icon: BarChart3, path: "analytics", module: "analytics", description: "Traffic, sales and account health" },
     ],
   },
   {
     title: "Operations",
     items: [
-      { label: "Inventory & restock", icon: Boxes, path: "inventory", soon: true },
-      { label: "Shipping", icon: Truck, path: "shipping", soon: true },
+      { label: "Inventory & restock", icon: Boxes, path: "inventory", module: "inventory", badge: "lowStock", description: "Stock, quantities and relisting" },
+      { label: "Shipping", icon: Truck, path: "shipping", module: "shipping", badge: "awaitingShipment", description: "Ship orders and manage policies" },
     ],
   },
   {

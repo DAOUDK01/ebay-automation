@@ -12,6 +12,7 @@ import { resolveSettings, Store, type StoreDocument } from "./models/Store";
 import { monthSpend } from "./models/Usage";
 import { enqueue } from "./services/jobs";
 import { defaultDeps, pushProposals, runBatch, syncIfDue, syncListings } from "./services/pipeline";
+import { runAccountSync, syncableModules } from "./services/accountSync";
 
 const WORKER_ID = `${os.hostname()}:${process.pid}`;
 const LOCK_MS = 15 * 60_000;
@@ -39,6 +40,19 @@ async function scheduleStores() {
     await enqueue(store._id, "batch", { trigger: "schedule" });
     // placeholder; the real next run is set when the batch finishes
     await Store.updateOne({ _id: store._id }, { $set: { "runner.nextRunAt": new Date(Date.now() + s.gapBetweenBatchesMin * 60_000) } });
+  }
+}
+
+/** Queue an account_sync for every store that is due (orders, messages, returns, finances...). */
+async function scheduleAccountSync() {
+  const stores = (await Store.find({})) as StoreDocument[];
+  for (const store of stores) {
+    const s = resolveSettings(store.settings);
+    if (!s.accountSync.enabled || !syncableModules(store).length) continue;
+    const due = !store.accountSyncAt || Date.now() - store.accountSyncAt.getTime() >= s.accountSync.everyMin * 60_000;
+    if (!due) continue;
+    await Store.updateOne({ _id: store._id }, { $set: { accountSyncAt: new Date() } });
+    await enqueue(store._id, "account_sync", { trigger: "schedule" });
   }
 }
 
@@ -91,6 +105,8 @@ async function runJob(job: InstanceType<typeof Job>) {
           { $set: { "runner.nextRunAt": new Date(Date.now() + wait), "runner.lastBatchAt": new Date(), "runner.lastError": "" } },
         );
       }
+    } else if (job.type === "account_sync") {
+      result = { runs: await runAccountSync(store, payload.modules) };
     } else if (job.type === "push") {
       await pushProposals(store, deps, new Types.ObjectId(String(payload.batchId)), ["approved"]);
       result = { batchId: payload.batchId };
@@ -103,7 +119,7 @@ async function runJob(job: InstanceType<typeof Job>) {
     const msg = String(e?.message ?? e);
     logger.error(`job ${job._id} (${job.type}) failed`, e);
     await Job.updateOne({ _id: job._id }, { $set: { status: "failed", finishedAt: new Date(), error: msg } });
-    if (store) {
+    if (store && job.type !== "account_sync") {
       await Store.updateOne({ _id: store._id }, { $set: { "runner.lastError": msg, "runner.nextRunAt": new Date(Date.now() + 30 * 60_000) } });
       if (job.type === "push" && (job.payload as any)?.batchId) {
         await Batch.updateOne({ _id: (job.payload as any).batchId }, { $set: { status: "review", error: msg } });
@@ -129,6 +145,7 @@ async function main() {
     try {
       await recoverStaleJobs();
       await scheduleStores();
+      await scheduleAccountSync();
       let job;
       while (!shuttingDown && (job = await claimJob())) {
         logger.info(`running job ${job._id} type=${job.type} store=${job.storeId}`);

@@ -12,6 +12,7 @@ export interface StoreSettings {
   gapBetweenBatchesMin: number;
   cooldownDays: number;
   resyncHours: number;
+  accountSync: { enabled: boolean; everyMin: number };
   activeHours: { enabled: boolean; start: string; end: string; timezone: string };
   competitorCount: number;
   excludeSeller: string;
@@ -103,11 +104,44 @@ export interface Store {
   lastSyncAt?: string;
   tokenExpiresAt?: string;
   stats?: StoreStats;
+  /** features this account can't use until it is reconnected (new eBay permissions) */
+  missingFeatures?: string[];
+  counts?: Counts;
+}
+
+/** Sidebar badges / overview numbers from the account modules (null = not known yet). */
+export interface Counts {
+  salesToday?: number | null;
+  ordersToday?: number | null;
+  awaitingShipment?: number | null;
+  openReturns?: number | null;
+  openCases?: number | null;
+  unreadMessages?: number | null;
+  negativeFeedback?: number | null;
+  availableFunds?: number | null;
+  currency?: string;
+  lowStock?: number | null;
+  activeCampaigns?: number | null;
+  sellerLevel?: string | null;
+}
+
+export interface ModuleInfo {
+  key: string;
+  label: string;
+  ready: boolean;
+}
+
+export interface ModuleSyncStatus extends ModuleInfo {
+  syncs: boolean;
+  lastRunAt: string | null;
+  lastSuccessAt: string | null;
+  summary: string;
+  error: string;
 }
 
 export interface Job {
   _id: string;
-  type: "sync" | "batch" | "push";
+  type: "sync" | "batch" | "push" | "account_sync";
   status: "queued" | "running" | "done" | "failed" | "cancelled";
   payload: any;
   result?: any;

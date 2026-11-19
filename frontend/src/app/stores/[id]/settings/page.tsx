@@ -2,6 +2,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import useSWR from "swr";
+import { AccountSyncCard } from "@/components/AccountSyncCard";
 import { DescriptionBrandingCard } from "@/components/DescriptionBrandingCard";
 import { useStore } from "@/components/StoreContext";
 import { toast } from "@/components/toast";
@@ -475,6 +476,12 @@ export default function SettingsPage() {
           onChange={(k, v) => up(`modules.description.${k}`, v)}
         />
       )}
+
+      <AccountSyncCard
+        storeId={store.id}
+        value={s.accountSync ?? { enabled: true, everyMin: 15 }}
+        onChange={(k, v) => up(`accountSync.${k}`, v)}
+      />
 
       <Card title="Danger zone">
         <div className="mb-4 flex items-center justify-between gap-4 border-b border-slate-100 pb-4">

@@ -5,6 +5,7 @@ import { useParams, usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import useSWR from "swr";
 import { AppShell } from "@/components/AppShell";
+import { ReconnectBanner } from "@/components/ReconnectBanner";
 import { StoreCtx, type StoreDetail } from "@/components/StoreContext";
 import { Alert, Badge, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
@@ -57,6 +58,7 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
         </div>
       ) : (
         <StoreCtx.Provider value={{ data, mutate }}>
+          <ReconnectBanner features={data.store.missingFeatures ?? []} />
           {page && isSectionRoot && (
             <div className="mb-6 flex items-start gap-3">
               {PageIcon && (

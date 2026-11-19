@@ -2,7 +2,7 @@ import { Schema, model } from "mongoose";
 
 /** Simple MongoDB-backed job queue processed by the worker (src/worker.ts).
  *  Add new job types here as the product grows. */
-export const JOB_TYPES = ["sync", "batch", "push"] as const;
+export const JOB_TYPES = ["sync", "batch", "push", "account_sync"] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
 const jobSchema = new Schema(
