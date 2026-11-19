@@ -1,8 +1,20 @@
 /**
- * Orders & fulfillment: Fulfillment API getOrders (incremental), tracking upload (createShippingFulfillment), refunds (issueRefund), packing slips.
- * Not built yet - replace this stub with a real AccountModule (see ../types.ts) and set ready: true.
- * Keep everything for this module inside src/modules/orders/.
+ * Orders & fulfillment: Fulfillment API getOrders (incremental by last-modified date), tracking upload
+ * (createShippingFulfillment), refunds (issueRefund) and packing slips (rendered by the frontend).
+ * Tracking and refunds only ever happen on a user click - never from sync.
  */
-import { stubModule } from "../stub";
+import type { AccountModule } from "../types";
+import router from "./router";
+import { orderCounts, syncOrders } from "./service";
 
-export default stubModule("orders", "Orders", ["https://api.ebay.com/oauth/api_scope/sell.fulfillment"]);
+const orders: AccountModule = {
+  key: "orders",
+  label: "Orders",
+  ready: true,
+  scopes: ["https://api.ebay.com/oauth/api_scope/sell.fulfillment"],
+  router,
+  sync: syncOrders,
+  counts: orderCounts,
+};
+
+export default orders;
