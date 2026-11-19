@@ -125,15 +125,18 @@ test("API: modules list, counts, sync status, stub modules 501, reconnect info",
 
   const mods = await (await get("/modules")).json();
   assert.equal(mods.modules.length, MODULE_KEYS.length);
-  assert.ok(mods.modules.every((m: any) => m.ready === false));
+  assert.deepEqual(mods.modules.map((m: any) => m.ready), MODULES.map((m) => m.ready));
 
-  assert.deepEqual((await (await get(`/stores/${store._id}/counts`)).json()).counts, {});
+  // nothing synced yet: every count unknown or zero
+  const counts = (await (await get(`/stores/${store._id}/counts`)).json()).counts;
+  assert.ok(Object.values(counts).every((v) => v === null || v === 0), JSON.stringify(counts));
   const status = await (await get(`/stores/${store._id}/account-sync`)).json();
   assert.equal(status.modules.length, MODULE_KEYS.length);
 
-  assert.equal((await get(`/stores/${store._id}/orders`)).status, 501);
+  const stub = MODULES.find((m) => !m.ready);
+  if (stub) assert.equal((await get(`/stores/${store._id}/${stub.key}`)).status, 501, "unbuilt modules answer 501");
   const sync = await fetch(`${base}/stores/${store._id}/account-sync`, { method: "POST", headers: { cookie } });
-  assert.equal(sync.status, 400, "nothing to sync until a module is built");
+  assert.equal(sync.status, MODULES.some((m) => m.ready && m.sync) ? 202 : 400, "nothing to sync until a module is built");
 
   const detail = await (await get(`/stores/${store._id}`)).json();
   assert.ok(detail.store.missingFeatures.includes("Orders & shipping"));

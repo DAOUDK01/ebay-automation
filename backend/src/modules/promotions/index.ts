@@ -1,8 +1,24 @@
 /**
- * Promotions: Marketing API (Promoted Listings campaigns, markdown sales).
- * Not built yet - replace this stub with a real AccountModule (see ../types.ts) and set ready: true.
- * Keep everything for this module inside src/modules/promotions/.
+ * Promotions: Marketing API - Promoted Listings Standard campaigns and their ads, item promotions (markdown sales).
+ * Writes (create / pause / resume / end / add listings) only happen on a confirmed user click.
+ *   models.ts  Campaign, Ad, ItemPromotion
+ *   logic.ts   mapping + request bodies
+ *   sync.ts    sync and the write actions
+ *   routes.ts  API for the Promotions page
  */
-import { stubModule } from "../stub";
+import type { AccountModule } from "../types";
+import { Campaign } from "./models";
+import router from "./routes";
+import { syncPromotions } from "./sync";
 
-export default stubModule("promotions", "Promotions", ["https://api.ebay.com/oauth/api_scope/sell.marketing"]);
+const promotions: AccountModule = {
+  key: "promotions",
+  label: "Promotions",
+  ready: true,
+  scopes: ["https://api.ebay.com/oauth/api_scope/sell.marketing"],
+  router,
+  sync: (ctx) => syncPromotions(ctx),
+  counts: async (store) => ({ activeCampaigns: await Campaign.countDocuments({ storeId: store._id, status: "RUNNING" }) }),
+};
+
+export default promotions;
