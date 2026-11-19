@@ -12,7 +12,8 @@
     "start:worker": "node dist/worker.js",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "seed:demo": "tsx scripts/seed-demo.ts"
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "seed:returns-messages": "tsx scripts/seed-returns-messages.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
