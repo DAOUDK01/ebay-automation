@@ -131,9 +131,8 @@ test("API: modules list, counts, sync status, stub modules 501, reconnect info",
     MODULES.map((m) => [m.key, m.ready]),
   );
 
-  // no data yet -> ready modules report zeros, never errors
-  const counts = (await (await get(`/stores/${store._id}/counts`)).json()).counts;
-  assert.ok(Object.values(counts).every((v) => !v || typeof v === "string"));
+  // counts = whatever the built modules report (zeros for a fresh account)
+  assert.deepEqual((await (await get(`/stores/${store._id}/counts`)).json()).counts, JSON.parse(JSON.stringify(await countsFor(store))));
   const status = await (await get(`/stores/${store._id}/account-sync`)).json();
   assert.equal(status.modules.length, MODULE_KEYS.length);
 
