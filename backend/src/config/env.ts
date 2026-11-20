@@ -14,6 +14,8 @@ const ebayEnv = (process.env.EBAY_ENV || "production") === "sandbox" ? "sandbox"
 export const env = {
   port: Number(process.env.PORT || 4100),
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3100",
+  /** public https base of this API for eBay push notifications; default = the website's /api forwarding */
+  publicApiUrl: (process.env.PUBLIC_API_URL || "").replace(/\/+$/, ""),
   mongoUri: process.env.MONGODB_URI || process.env.MONGO_URL || "mongodb://127.0.0.1:27017/ebay-optimizer",
   mongoDbName: process.env.MONGODB_DB || "ebay-optimizer",
   get jwtSecret() {
@@ -28,6 +30,8 @@ export const env = {
     clientId: process.env.EBAY_CLIENT_ID || "",
     clientSecret: process.env.EBAY_CLIENT_SECRET || "",
     ruName: process.env.EBAY_RUNAME || "",
+    /** Dev ID (Application Keys page) - lets us verify eBay's notification signatures */
+    devId: process.env.EBAY_DEV_ID || "",
     apiBase: ebayEnv === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com",
     authBase: ebayEnv === "sandbox" ? "https://auth.sandbox.ebay.com" : "https://auth.ebay.com",
   },

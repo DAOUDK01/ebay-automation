@@ -17,6 +17,8 @@ import { PostOrderCase } from "../returns/model";
 import { draftReply, type DraftFn, type DraftInput } from "./draft";
 import { Message, ReplyTemplate, threadIdOf, threadKeyFromId } from "./model";
 import { enqueue } from "../../services/jobs";
+import { env } from "../../config/env";
+import { MessageNotify, notificationUrl, subscribe } from "./notifications";
 import { repairBodies } from "./sync";
 import { buildMarkReadXml, buildPartnerXml, buildRtqXml } from "./trading";
 
@@ -303,6 +305,31 @@ router.post("/threads/:id/draft", async (req, res) => {
   }
   await addUsage(store._id, r.costUsd, r.inputTokens, r.outputTokens);
   res.json({ text: r.text.slice(0, 2000), costUsd: r.costUsd });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Instant messages (eBay push notifications)
+
+router.get("/notifications", async (req, res) => {
+  const store = await loadStore(req);
+  const st = await MessageNotify.findOne({ storeId: store._id }).lean();
+  res.json({
+    enabled: Boolean(st?.enabledAt && !st.error),
+    enabledAt: st?.enabledAt ?? null,
+    error: st?.error ?? "",
+    url: notificationUrl(),
+    lastNotificationAt: st?.lastNotificationAt ?? null,
+    notifications: st?.notifications ?? 0,
+    signaturesVerified: Boolean(env.ebay.devId),
+  });
+});
+
+/** Subscribe (again) now - e.g. after reconnecting or if eBay reported an error. */
+router.post("/notifications/enable", async (req, res) => {
+  const store = await loadStore(req);
+  const r = await subscribe(store._id, deps.trading(store));
+  if (!r.ok) throw new HttpError(502, r.error);
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------------------------

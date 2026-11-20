@@ -3,6 +3,7 @@ import type { Types } from "mongoose";
 import type { TradingClient } from "../../lib/ebay/trading";
 import type { SyncContext, SyncResult } from "../types";
 import { Message } from "./model";
+import { ensureSubscribed } from "./notifications";
 import { extractUserText, fetchBodies, fetchHeaders, fetchQuestions, isSystemSender, looksLikeRawEmail, unescapeHtml, type MappedMessage } from "./trading";
 
 const DAY = 86_400_000;
@@ -169,6 +170,8 @@ export async function syncMessages(ctx: SyncContext): Promise<SyncResult> {
   const from = cursorAt ? new Date(cursorAt.getTime() - OVERLAP_MS) : new Date(now.getTime() - FIRST_LOOKBACK_DAYS * DAY);
   const sellerId = ctx.store.ebayUserId;
   const t = ctx.clients.trading;
+  // accounts connected before instant messages existed get subscribed here (once; retried daily on error)
+  await ensureSubscribed(ctx.store._id, t);
 
   const headers = await fetchHeaders(t, sellerId, from, now);
   const questions = await fetchQuestions(t, sellerId, from, now);

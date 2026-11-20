@@ -1,5 +1,5 @@
 /** Connect an eBay seller account via OAuth (user consent). */
-import { Router } from "express";
+import express, { Router } from "express";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { env } from "../config/env";
@@ -9,9 +9,47 @@ import { TradingClient } from "../lib/ebay/trading";
 import { logger } from "../lib/logger";
 import { requireAuth } from "../middleware/auth";
 import { HttpError, parseBody } from "../middleware/error";
-import { DEFAULT_SETTINGS, Store } from "../models/Store";
+import { DEFAULT_SETTINGS, Store, type StoreDocument } from "../models/Store";
+import { makeTrigger, MessageNotify, parseNotification, subscribe, verifyNotification } from "../modules/messages/notifications";
+import { runAccountSync } from "../services/accountSync";
 
 const router = Router();
+
+// ------------------------------------------------------------- instant messages (eBay Platform Notifications)
+
+/** a notification means "this account has new messages": run its messages sync now (throttled; swappable in tests) */
+export const notificationDeps = {
+  syncNow: makeTrigger(async (storeId) => {
+    const store = (await Store.findById(storeId)) as StoreDocument | null;
+    if (store) await runAccountSync(store, ["messages"]);
+  }),
+};
+
+/** eBay POSTs a SOAP envelope here. Answer 200 at once; the payload is only a hint, never trusted. */
+router.post("/notifications", express.text({ type: () => true, limit: "2mb" }), async (req, res) => {
+  res.status(200).send("OK");
+  try {
+    const n = parseNotification(typeof req.body === "string" ? req.body : "");
+    const verdict = verifyNotification(n);
+    if (verdict === "invalid") {
+      logger.warn(`instant messages: ignored a notification with a bad signature (${n.event || "no event"})`);
+      return;
+    }
+    if (!n.recipient) return;
+    const rx = new RegExp(`^${n.recipient.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+    const stores = await Store.find({ ebayUserId: rx }).select("_id").lean();
+    for (const s of stores) {
+      await MessageNotify.updateOne(
+        { storeId: s._id },
+        { $set: { lastNotificationAt: new Date(), lastEvent: n.event }, $inc: { notifications: 1 } },
+        { upsert: true },
+      );
+      void notificationDeps.syncNow(String(s._id));
+    }
+  } catch (e: any) {
+    logger.warn(`instant messages: couldn't handle a notification: ${e?.message ?? e}`);
+  }
+});
 
 async function connectStore(userId: string, code: string) {
   const tokens = await exchangeCode(code);
@@ -35,6 +73,8 @@ async function connectStore(userId: string, code: string) {
   );
   seedUserToken(String(store!._id), tokens.accessToken, tokens.accessExpiresAt);
   logger.info(`eBay account ${ebayUserId} connected for user ${userId}`);
+  // instant messages: subscribe in the background (never blocks or fails the connection)
+  void subscribe(store!._id, new TradingClient(async () => tokens.accessToken, store!.siteId));
   return store!;
 }
 

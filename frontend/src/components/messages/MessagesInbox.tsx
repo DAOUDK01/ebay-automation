@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { Empty, Pagination, Spinner, cx } from "@/components/ui";
 import { fetcher, timeAgo } from "@/lib/api";
 import type { MessageThread, ThreadsResponse } from "@/lib/messages";
+import { InstantStatus } from "./InstantStatus";
 import { ThreadView } from "./ThreadView";
 
 export function MessagesInbox({ storeId, initialThread = null }: { storeId: string; initialThread?: string | null }) {
@@ -13,10 +14,12 @@ export function MessagesInbox({ storeId, initialThread = null }: { storeId: stri
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string | null>(initialThread);
+  const [instant, setInstant] = useState(false);
 
   useEffect(() => setPage(1), [unread, search]);
   const key = `/stores/${storeId}/messages/threads?unread=${unread ? 1 : ""}&q=${encodeURIComponent(search)}&page=${page}`;
-  const { data, error, mutate } = useSWR<ThreadsResponse>(key, fetcher, { refreshInterval: 60_000 });
+  // with instant on, eBay pushes new messages to the server within seconds - check for them more often
+  const { data, error, mutate } = useSWR<ThreadsResponse>(key, fetcher, { refreshInterval: instant ? 15_000 : 60_000 });
 
   useEffect(() => {
     if (!selected && data?.items[0] && typeof window !== "undefined" && window.innerWidth >= 1024) setSelected(data.items[0].id);
@@ -40,6 +43,7 @@ export function MessagesInbox({ storeId, initialThread = null }: { storeId: stri
             </button>
           ))}
         </div>
+        <InstantStatus storeId={storeId} onState={(s) => setInstant(s.enabled)} />
         <form
           className="ml-auto w-full sm:w-72"
           onSubmit={(e) => {
