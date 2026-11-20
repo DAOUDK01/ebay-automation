@@ -75,14 +75,68 @@ export function htmlToPlain(html: string): string {
     .trim();
 }
 
+/** an escaped tag, any number of layers deep: "&lt;div", "&amp;lt;div", ... */
+const ESCAPED_TAG = /&(?:amp;)*lt;\s*(\/?(?:html|body|table|tr|td|div|span|p|br|a|img|center|font|b|strong)\b|!--)/gi;
+const REAL_TAG = /<\s*(\/?(?:html|body|table|tr|td|div|span|p|br|a|img|center|font|b|strong)\b|!--)/gi;
+
+/**
+ * eBay's GetMyMessages <Text> is HTML that is itself entity-escaped ("&lt;table ...&gt;"), sometimes twice.
+ * Decode until it is real markup (only while escaped tags outnumber real ones, so a buyer typing "&lt;" is safe).
+ */
+export function unescapeHtml(s: string): string {
+  let out = s || "";
+  for (let i = 0; i < 3; i++) {
+    const escaped = (out.match(ESCAPED_TAG) ?? []).length;
+    if (!escaped || escaped <= (out.match(REAL_TAG) ?? []).length) break;
+    out = out
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#0?39;|&apos;/gi, "'")
+      .replace(/&amp;/gi, "&");
+  }
+  return out;
+}
+
+/** Inner HTML of the first <div id="UserInputtedText">, matching nested <div>s (a buyer's paragraphs are divs too). */
+function userInputtedHtml(html: string): string | null {
+  const open = /<div[^>]*\bid\s*=\s*["']?UserInputtedText["']?[^>]*>/i.exec(html);
+  if (!open) return null;
+  const start = open.index + open[0].length;
+  const tag = /<(\/?)div\b[^>]*>/gi;
+  tag.lastIndex = start;
+  let depth = 1;
+  for (let m; (m = tag.exec(html)); ) {
+    depth += m[1] ? -1 : 1;
+    if (depth === 0) return html.slice(start, m.index);
+  }
+  return html.slice(start);
+}
+
+/** Lines of eBay's notification template (used only when an email has no UserInputtedText block). */
+const TEMPLATE_LINE =
+  /^(ebay|reply|respond|view (order|item|listing)|item id:?.*|order (number|status).*|new message( from)?:?.*|.* sent (you )?a message.*|email reference id.*|.*\[#[a-z0-9_#-]+#\].*|get the ebay app.*|learn more.*|privacy( notice)?|user agreement|help ?& ?contact|unsubscribe.*|copyright.*|©.*|.*ebay inc.*|.*don'?t check this (mailbox|email).*|.*only purchases on ebay are covered.*|.*ebay sent this message.*|.*marketplace safety.*|end date:.*|\d+%? positive.*|\(\d+\s*\)|\s*)$/i;
+
 /**
  * The buyer's own words from an eBay message email. eBay wraps them in <div id="UserInputtedText">
  * inside a full notification email (logo, buttons, footer); everything outside that div is template.
  */
 export function extractUserText(html: string): string {
-  const m = /<div[^>]*\bid\s*=\s*["']?UserInputtedText["']?[^>]*>([\s\S]*?)<\/div>/i.exec(html || "");
-  return htmlToPlain(m ? m[1] : html);
+  const real = unescapeHtml(html || "");
+  const inner = userInputtedHtml(real);
+  if (inner !== null) return htmlToPlain(inner);
+  const plain = htmlToPlain(real);
+  if (!/<|ebay/i.test(real)) return plain; // plain text from the start
+  return plain
+    .split("\n")
+    .filter((l) => !TEMPLATE_LINE.test(l.trim()))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
+
+/** A body saved before the escaped-HTML fix: it still holds the whole email as text. */
+export const looksLikeRawEmail = (body: string) => /<\s*(table|div|td|tr|html|!--)|UserInputtedText|&lt;\s*(table|div|!--)/i.test(body || "");
 
 /** GetMyMessages <Message> (headers) -> row. FolderID 1 = Sent. */
 export function mapMyMessage(m: any, sellerId: string): MappedMessage {
@@ -119,7 +173,8 @@ export function mapMyMessage(m: any, sellerId: string): MappedMessage {
 
 /** GetMyMessages ReturnMessages <Message> -> plain-text body (Content when eBay sends it, else the user text in Text's HTML email). */
 export function messageBody(m: any): string {
-  const content = htmlToPlain(s(m.Content));
+  // Content (when eBay sends it) can carry the same escaped email as Text, so it goes through the same extraction
+  const content = extractUserText(s(m.Content));
   if (content) return content.slice(0, 8000);
   return extractUserText(s(m.Text)).slice(0, 8000);
 }

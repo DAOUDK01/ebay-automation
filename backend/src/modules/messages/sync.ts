@@ -3,12 +3,12 @@ import type { Types } from "mongoose";
 import type { TradingClient } from "../../lib/ebay/trading";
 import type { SyncContext, SyncResult } from "../types";
 import { Message } from "./model";
-import { fetchBodies, fetchHeaders, fetchQuestions, isSystemSender, type MappedMessage } from "./trading";
+import { extractUserText, fetchBodies, fetchHeaders, fetchQuestions, isSystemSender, looksLikeRawEmail, type MappedMessage } from "./trading";
 
 const DAY = 86_400_000;
 export const FIRST_LOOKBACK_DAYS = 90;
 /** bump when body extraction changes: GetMyMessages bodies saved by an older version are fetched again */
-export const BODY_VERSION = 2;
+export const BODY_VERSION = 3;
 /** re-read a day before the last sync so nothing slips between runs */
 const OVERLAP_MS = DAY;
 /** bodies fetched per run (10 per call) */
@@ -42,11 +42,36 @@ export async function upsertMessages(storeId: Types.ObjectId, rows: MappedMessag
   return res.upsertedCount;
 }
 
+/**
+ * Bodies saved by older versions: a body that still holds eBay's whole email (escaped HTML shown as text)
+ * is re-extracted from what's stored - no eBay call needed; clean ones are just marked current.
+ * Returns how many bodies were cleaned.
+ */
+export async function repairBodies(storeId: Types.ObjectId): Promise<number> {
+  const old = await Message.find({ storeId, bodyVersion: { $lt: BODY_VERSION }, body: { $ne: "" } })
+    .select("body bodyFetched")
+    .lean();
+  if (!old.length) return 0;
+  let cleaned = 0;
+  const ops = old.map((m) => {
+    const set: Record<string, unknown> = { bodyVersion: BODY_VERSION };
+    if (looksLikeRawEmail(m.body)) {
+      const text = extractUserText(m.body).slice(0, 8000);
+      set.body = text;
+      if (!text) set.bodyFetched = false; // nothing usable kept: fetch it again
+      cleaned++;
+    }
+    return { updateOne: { filter: { _id: m._id }, update: { $set: set } } };
+  });
+  await Message.bulkWrite(ops);
+  return cleaned;
+}
+
 export async function fillBodies(storeId: Types.ObjectId, t: Pick<TradingClient, "call">): Promise<number> {
   const missing = await Message.find({
     storeId,
     messageId: { $ne: "" },
-    $or: [{ bodyFetched: false }, { source: "my_messages", bodyVersion: { $lt: BODY_VERSION } }],
+    bodyFetched: false,
   })
     .sort({ receivedAt: -1 })
     .limit(MAX_BODIES)
@@ -136,6 +161,7 @@ export async function syncMessages(ctx: SyncContext): Promise<SyncResult> {
   const headers = await fetchHeaders(t, sellerId, from, now);
   const questions = await fetchQuestions(t, sellerId, from, now);
   const created = await upsertMessages(ctx.store._id, [...headers, ...questions]);
+  await repairBodies(ctx.store._id);
   const bodies = await fillBodies(ctx.store._id, t);
   await attachOrphans(ctx.store._id);
   await dedupeOutbound(ctx.store._id);

@@ -16,6 +16,7 @@ import { addUsage, monthSpend } from "../../models/Usage";
 import { PostOrderCase } from "../returns/model";
 import { draftReply, type DraftFn, type DraftInput } from "./draft";
 import { Message, ReplyTemplate, threadIdOf, threadKeyFromId } from "./model";
+import { repairBodies } from "./sync";
 import { buildMarkReadXml, buildPartnerXml, buildRtqXml } from "./trading";
 
 /** Swappable in tests (fake eBay, fake Claude). */
@@ -33,6 +34,8 @@ const router = Router({ mergeParams: true });
 /** ?unread=1 &q= &page= */
 router.get("/threads", async (req, res) => {
   const store = await loadStore(req);
+  // clean bodies saved by an older version right away (no eBay call), not only at the next sync
+  await repairBodies(store._id);
   const page = Math.max(1, Number(req.query.page) || 1);
   const pageSize = Math.min(100, Math.max(5, Number(req.query.pageSize) || 30));
   const match: Record<string, unknown> = { storeId: store._id };

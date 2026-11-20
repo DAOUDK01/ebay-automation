@@ -352,14 +352,20 @@ test("message text: only the buyer's words from eBay's email, line breaks and sy
   assert.equal(isSystemSender("ebaybuyer123"), false);
 });
 
-test("sync: old bodies are re-fetched once with the new extraction; orphan replies join the buyer's thread", async () => {
+test("sync: old bodies holding the whole email are repaired from what's stored (no eBay call); orphan replies join the thread", async () => {
   const { attachOrphans, BODY_VERSION } = await import("../src/modules/messages/sync");
   const store = await makeStore();
-  // a body saved by the previous version (whole email flattened)
+  // what the previous version saved for an escaped email: the whole email's HTML as text
   await Message.create({
     storeId: store._id, key: "OLD-1", messageId: "800001", source: "my_messages", threadKey: "buyer_bob|256100000001",
-    direction: "in", sender: "buyer_bob", buyer: "buyer_bob", itemId: "256100000001", body: "eBay New message from buyer_bob Hi ... Email reference id",
-    bodyFetched: true, receivedAt: new Date(Date.now() - 3600_000),
+    direction: "in", sender: "buyer_bob", buyer: "buyer_bob", itemId: "256100000001", body: EBAY_EMAIL,
+    bodyFetched: true, bodyVersion: 2, receivedAt: new Date(Date.now() - 3600_000),
+  });
+  // an old body that was already clean: kept as it is
+  await Message.create({
+    storeId: store._id, key: "OLD-2", messageId: "800003", source: "my_messages", threadKey: "carol99|256100000002",
+    direction: "in", sender: "carol99", buyer: "carol99", itemId: "256100000002", body: "Thanks, got it!",
+    bodyFetched: true, bodyVersion: 2, receivedAt: new Date(Date.now() - 7200_000),
   });
   // my reply from the Sent folder without an item number
   await Message.create({
@@ -376,11 +382,46 @@ test("sync: old bodies are re-fetched once with the new extraction; orphan repli
     if (name === "GetMyMessages") return { Messages: {}, PaginationResult: { TotalNumberOfPages: "1" } };
     return { MemberMessage: {}, PaginationResult: { TotalNumberOfPages: "1" } };
   };
+  const bodyCalls: string[] = [];
+  const inner = (t as any).call;
+  (t as any).call = async (name: string, xml: string) => {
+    if (name === "GetMyMessages" && xml.includes("ReturnMessages")) bodyCalls.push(xml);
+    return inner(name, xml);
+  };
   await syncMessages({ store, clients: { trading: t } as any, cursor: null, lastSuccessAt: null, log: () => {} });
   const old = await Message.findOne({ storeId: store._id, key: "OLD-1" }).lean();
   assert.match(old!.body, /^Hi,\nWill this fit/);
+  assert.ok(!old!.body.includes("<"), "no HTML left");
   assert.equal(old!.bodyVersion, BODY_VERSION);
+  assert.equal((await Message.findOne({ storeId: store._id, key: "OLD-2" }).lean())!.body, "Thanks, got it!");
+  assert.equal(bodyCalls.length, 0, "repaired locally - nothing fetched from eBay again");
   const sent = await Message.findOne({ storeId: store._id, key: "SENT-1" }).lean();
   assert.equal(sent!.threadKey, "buyer_bob|256100000001", "reply joined the item conversation");
   assert.equal(await attachOrphans(store._id), 0, "nothing left to move");
+});
+
+// eBay's Text as it really arrives (the screenshot case): the email HTML is entity-escaped, with
+// eBay's <!--..._START--> comments and the ebaylogo table; the buyer's words are in UserInputtedText,
+// split into paragraph divs.
+const ESCAPED_EMAIL = EBAY_EMAIL.replace("<html>", "<html><!--9f5e9f0a-3539-25f1-4628-b7bcd5cb8225_START--><table id=\"ebaylogo\" width=\"100%\"><tr><td>logo</td></tr></table><!--d30ae216-ff2d-6a16-937c-6390d2af7911_END-->")
+  .replace(`<div id="UserInputtedText">Hi,<br />Will this fit my 2019 Camry SE?`, `<div id="UserInputtedText"><div>Hi,</div><div>Will this fit my 2019 Camry SE?</div>`)
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;");
+
+test("message text: escaped (and double-escaped) eBay email HTML, nested paragraph divs, no template", async () => {
+  const { extractUserText, unescapeHtml, looksLikeRawEmail } = await import("../src/modules/messages/trading");
+  const want = "Hi,\nWill this fit my 2019 Camry SE?\n\nIt's the 2.5L & I need it by Friday.\nThanks,\nBob";
+  assert.equal(messageBody({ Text: ESCAPED_EMAIL }), want);
+  assert.equal(messageBody({ Text: ESCAPED_EMAIL.replace(/&/g, "&amp;") }), want, "double-escaped");
+  assert.equal(messageBody({ Content: ESCAPED_EMAIL }), want, "same escaped email in Content");
+  // a buyer typing "&lt;" in plain text isn't turned into a tag
+  assert.equal(unescapeHtml("5 &lt; 6 and that's fine"), "5 &lt; 6 and that's fine");
+  assert.equal(extractUserText("Price is &lt; $50, ok?"), "Price is < $50, ok?");
+  // an email without a UserInputtedText block: template lines are dropped
+  const noMarker = `<table><tr><td>eBay</td></tr><tr><td>New message from: buyer_bob (12)</td></tr><tr><td><p>Is the left one still available?</p></td></tr><tr><td>Reply</td></tr><tr><td>Item ID: 256100000001</td></tr><tr><td>Email reference id: [#a05-xyz#]_[#123#]</td></tr><tr><td>© 1995-2026 eBay Inc. All Rights Reserved</td></tr></table>`;
+  assert.equal(extractUserText(noMarker), "Is the left one still available?");
+  assert.equal(looksLikeRawEmail(EBAY_EMAIL), true);
+  assert.equal(looksLikeRawEmail("Thanks, got it!"), false);
 });
