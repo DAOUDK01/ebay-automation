@@ -425,3 +425,30 @@ test("message text: escaped (and double-escaped) eBay email HTML, nested paragra
   assert.equal(looksLikeRawEmail(EBAY_EMAIL), true);
   assert.equal(looksLikeRawEmail("Thanks, got it!"), false);
 });
+
+test("repair: legacy rows without a bodyVersion field; cut-off copies are queued for download, readable ones cleaned", async () => {
+  const { repairBodies, BODY_VERSION } = await import("../src/modules/messages/sync");
+  const store = await makeStore();
+  const raw = Message.collection; // bypass mongoose defaults: documents exactly as the first version saved them
+  const base = { storeId: store._id, source: "my_messages", direction: "in", sender: "ygriega0.23", buyer: "ygriega0.23", itemId: "920096189681", bodyFetched: true, receivedAt: new Date() };
+  // 1. whole email with the buyer's words inside -> cleaned locally
+  await raw.insertOne({ ...base, key: "L-1", messageId: "700001", threadKey: "ygriega0.23|920096189681", body: EBAY_EMAIL });
+  // 2. email cut off at 8000 chars before UserInputtedText -> downloaded again
+  const cut = `<!--d30ae216-ff2d-6a16-937c-6390d2af7911_END-->\n    <table id="ebaylogo" width="100%">\n${"<tr><td style=\"border-collapse: collapse\">x</td></tr>\n".repeat(150)}`.slice(0, 8000);
+  await raw.insertOne({ ...base, key: "L-2", messageId: "700002", threadKey: "ygriega0.23|920096189681", body: cut });
+  // 3. clean legacy text -> untouched
+  await raw.insertOne({ ...base, key: "L-3", messageId: "700003", threadKey: "ygriega0.23|920096189681", body: "Is this still available?" });
+  assert.equal((await raw.findOne({ key: "L-1" }))!.bodyVersion, undefined, "really has no bodyVersion field");
+
+  assert.deepEqual(await repairBodies(store._id), { cleaned: 1, refetch: 1 });
+  const [l1, l2, l3] = await Promise.all(["L-1", "L-2", "L-3"].map((key) => Message.findOne({ storeId: store._id, key }).lean()));
+  assert.match(l1!.body, /^Hi,\nWill this fit/);
+  assert.equal(l2!.body, "");
+  assert.equal(l2!.bodyFetched, false, "queued for download");
+  assert.equal(l3!.body, "Is this still available?");
+  assert.ok([l1, l2, l3].every((m) => m!.bodyVersion === BODY_VERSION));
+  assert.deepEqual(await repairBodies(store._id), { cleaned: 0, refetch: 0 }, "runs once");
+  // a plain message mentioning eBay keeps every line
+  const { extractUserText } = await import("../src/modules/messages/trading");
+  assert.equal(extractUserText("Hi, saw this on eBay\nReply when you can"), "Hi, saw this on eBay\nReply when you can");
+});

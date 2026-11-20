@@ -126,7 +126,7 @@ export function extractUserText(html: string): string {
   const inner = userInputtedHtml(real);
   if (inner !== null) return htmlToPlain(inner);
   const plain = htmlToPlain(real);
-  if (!/<|ebay/i.test(real)) return plain; // plain text from the start
+  if (!/<\s*[a-z!\/]/i.test(real)) return plain; // plain text from the start: nothing to filter
   return plain
     .split("\n")
     .filter((l) => !TEMPLATE_LINE.test(l.trim()))

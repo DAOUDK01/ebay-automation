@@ -3,12 +3,12 @@ import type { Types } from "mongoose";
 import type { TradingClient } from "../../lib/ebay/trading";
 import type { SyncContext, SyncResult } from "../types";
 import { Message } from "./model";
-import { extractUserText, fetchBodies, fetchHeaders, fetchQuestions, isSystemSender, looksLikeRawEmail, type MappedMessage } from "./trading";
+import { extractUserText, fetchBodies, fetchHeaders, fetchQuestions, isSystemSender, looksLikeRawEmail, unescapeHtml, type MappedMessage } from "./trading";
 
 const DAY = 86_400_000;
 export const FIRST_LOOKBACK_DAYS = 90;
 /** bump when body extraction changes: GetMyMessages bodies saved by an older version are fetched again */
-export const BODY_VERSION = 3;
+export const BODY_VERSION = 4;
 /** re-read a day before the last sync so nothing slips between runs */
 const OVERLAP_MS = DAY;
 /** bodies fetched per run (10 per call) */
@@ -47,24 +47,36 @@ export async function upsertMessages(storeId: Types.ObjectId, rows: MappedMessag
  * is re-extracted from what's stored - no eBay call needed; clean ones are just marked current.
  * Returns how many bodies were cleaned.
  */
-export async function repairBodies(storeId: Types.ObjectId): Promise<number> {
-  const old = await Message.find({ storeId, bodyVersion: { $lt: BODY_VERSION }, body: { $ne: "" } })
-    .select("body bodyFetched")
+export async function repairBodies(storeId: Types.ObjectId): Promise<{ cleaned: number; refetch: number }> {
+  // messages saved before `bodyVersion` existed have no such field at all - `$lt` alone would skip them
+  const old = await Message.find({
+    storeId,
+    body: { $ne: "" },
+    $or: [{ bodyVersion: { $exists: false } }, { bodyVersion: null }, { bodyVersion: { $lt: BODY_VERSION } }],
+  })
+    .select("body messageId")
     .lean();
-  if (!old.length) return 0;
+  if (!old.length) return { cleaned: 0, refetch: 0 };
   let cleaned = 0;
+  let refetch = 0;
   const ops = old.map((m) => {
     const set: Record<string, unknown> = { bodyVersion: BODY_VERSION };
-    if (looksLikeRawEmail(m.body)) {
-      const text = extractUserText(m.body).slice(0, 8000);
-      set.body = text;
-      if (!text) set.bodyFetched = false; // nothing usable kept: fetch it again
-      cleaned++;
+    const body = String(m.body ?? "");
+    if (looksLikeRawEmail(body)) {
+      if (/UserInputtedText/i.test(unescapeHtml(body)) || !m.messageId) {
+        // the buyer's words are in what we stored: clean it here
+        set.body = extractUserText(body).slice(0, 8000);
+        cleaned++;
+      } else {
+        // the stored copy was cut off before the buyer's words (old 8000-char limit): download it again
+        Object.assign(set, { body: "", bodyFetched: false });
+        refetch++;
+      }
     }
     return { updateOne: { filter: { _id: m._id }, update: { $set: set } } };
   });
   await Message.bulkWrite(ops);
-  return cleaned;
+  return { cleaned, refetch };
 }
 
 export async function fillBodies(storeId: Types.ObjectId, t: Pick<TradingClient, "call">): Promise<number> {
