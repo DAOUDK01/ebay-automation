@@ -251,10 +251,12 @@ test("store title format reaches Claude and missing fixed text is rejected", asy
   };
   const fresh = (await Store.findById(store._id)) as StoreDocument;
   const batch = await runBatch(fresh, withFormat, { itemIds: ["2"] });
-  assert.equal(seenTemplate, tpl, "format is passed to Claude");
+  // the fixture is a NEW Acme (aftermarket) part: the format's "OEM Used" becomes "New" for it
+  assert.equal(seenTemplate, "{Year range} {Brand} {Model} {Part name and location} {Part number} New", "format (adapted to the part) is passed to Claude");
   const p = await Proposal.findOne({ batchId: batch!._id, itemId: "2" }).lean();
-  assert.equal(p!.changes.title, undefined, "title without 'OEM Used' is not applied");
-  assert.ok(p!.notes.some((n: string) => /missing required text "OEM Used"/.test(n)));
+  assert.equal(p!.part.label, "New · Aftermarket (Acme)");
+  assert.equal(p!.changes.title, undefined, "title without the fixed ending is not applied");
+  assert.ok(p!.notes.some((n: string) => /missing required text "New"/.test(n)));
 });
 
 test("manual edits are revertable: description, quantity and the full fitment list come back", async () => {

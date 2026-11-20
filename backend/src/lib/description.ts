@@ -36,6 +36,8 @@ export interface AplusInput {
   currency?: string;
   /** other items from the store for "You may also like" */
   related?: RelatedItem[];
+  /** ribbon on the main photo: "Genuine OEM" for genuine parts, "Brand New" for new aftermarket parts */
+  ribbon?: string;
 }
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'" };
@@ -299,7 +301,7 @@ export function renderAplus(input: AplusInput): string {
         (pics[0]
           ? `<div style="flex:1 1 360px;min-width:0">` +
             `<div style="position:relative;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;background:#ffffff">` +
-            `<div style="position:absolute;top:14px;left:-6px;background:${R};color:#ffffff;font-size:12px;font-weight:900;${caps(1.5)};padding:6px 14px 6px 16px;box-shadow:0 2px 6px rgba(0,0,0,0.25)">Genuine OEM</div>` +
+            `<div style="position:absolute;top:14px;left:-6px;background:${R};color:#ffffff;font-size:12px;font-weight:900;${caps(1.5)};padding:6px 14px 6px 16px;box-shadow:0 2px 6px rgba(0,0,0,0.25)">${esc(input.ribbon ?? "Genuine OEM")}</div>` +
             `<img src="${esc(pics[0])}" alt="${esc(input.title)}" style="display:block;width:100%;height:auto"></div>` +
             (pics.length > 1
               ? `<div style="display:flex;gap:8px;margin-top:8px">` +

@@ -320,6 +320,16 @@ export interface Proposal {
   notes: string[];
   fitment?: FitmentInfo | null;
   shipping?: ShippingAnalysis | null;
+  /** condition + genuine OEM / aftermarket, decided from eBay's condition and the Brand */
+  part?: {
+    condition: "new" | "used" | "reman" | "for_parts";
+    origin: "oem" | "aftermarket" | "unknown";
+    brand: string;
+    oemWording: boolean;
+    partNumber: string;
+    reason: string;
+    label: string;
+  } | null;
   kind?: "optimizer" | "manual";
   competitors?: { title: string; price: number; shipping: number | null; condition: string; url: string; sellerFeedback: number | null }[];
   error?: string;

@@ -55,6 +55,20 @@ receive the current listing data, the eBay category's missing item specifics (as
 allowed values, and a sample of competing active fixed-price listings. Suggest improvements
 that raise search relevance (Cassini) and conversion.
 
+Part profile ("part_profile" in the input) - decided from the listing's eBay condition and Brand; follow
+it in the title, item specifics AND description:
+- condition: "New", "Used", "Remanufactured" or "For parts". Never describe a new part as used / pulled
+  from a vehicle / with signs of use, and never call a used part new.
+- origin "aftermarket": the part is made by an aftermarket brand (e.g. FEBEST, Dorman), NOT by the car
+  maker. Never call it OEM, Genuine, factory or original anywhere. Its Brand is that aftermarket brand
+  (never the car make), its Manufacturer Part Number is the brand's own number. OE numbers it replaces
+  may go in the "OE/OEM Part Number" / "Interchange Part Number" specifics only - not in the title.
+  In the title, the brand goes where {Brand} is and the car make stays with the model (e.g.
+  "FEBEST Acura MDX").
+- oem_wording_allowed false: do not use the words OEM / Genuine in the title or description.
+- keep_part_number: this exact part number must stay in the title (you may not replace it with another
+  number such as an OE number).
+
 Title rules:
 - Max 80 characters. Use the space well: Brand + Product type + key attributes (model, part
   number, size, color, compatibility such as years/make/model, quantity).
@@ -160,16 +174,19 @@ template does the layout, branding, photos, specs table, compatibility table and
 the words only (plain text, no HTML, no links, no emails/phone numbers, no emojis):
 - Plain, friendly, easy English a normal buyer understands. Short sentences. Facts only - never invent
   features, condition details, part numbers or fitment that the listing data/evidence does not support.
-- headline: one short line naming the part, e.g. "Genuine Honda Civic Front Left Headlight".
-- intro: 2-3 sentences: what the part is, which vehicles it fits (broadly), and that it is a used
-  genuine OEM part pulled from a vehicle (only if the listing says used/OEM).
-- highlights: 4-6 short bullet points of real buyer benefits/facts (OEM quality, exact part number,
-  position, what it connects to, tested/inspected only if stated in the listing).
+- headline: one short line naming the part, e.g. "Genuine Honda Civic Front Left Headlight" (genuine
+  OEM) or "FEBEST Differential Mount Bushing for Acura MDX" (aftermarket).
+- intro: 2-3 sentences: what the part is, which vehicles it fits (broadly), and what it is per
+  part_profile: a used genuine OEM part pulled from a vehicle (used + OEM), or a new part made by its
+  aftermarket brand as a replacement (new + aftermarket) - never mix these up.
+- highlights: 4-6 short bullet points of real buyer benefits/facts (OEM quality only for genuine parts,
+  exact part number, position, what it connects to, tested/inspected only if stated in the listing).
 - fitment_summary: one or two sentences summarising compatible vehicles and reminding the buyer to
   check the part number / compatibility table before buying.
 - condition_notes: honest condition from the listing's condition and condition description / current
-  description (wear, scratches, missing tabs). If nothing is stated, say it is a used part with
-  normal signs of use and to check the photos. Never claim "new" or "perfect".
+  description (wear, scratches, missing tabs). If nothing is stated: for a used part say it is a used
+  part with normal signs of use and to check the photos (never claim "new" or "perfect"); for a new
+  part say it is new and unused (mention original packaging only if the listing says so).
 - included: what's in the box, only what the listing supports (e.g. "Headlight assembly only - bulbs
   not included" if stated); [] if unknown.
 - install_tips: one short practical tip, or "" if nothing useful.
@@ -292,8 +309,11 @@ export interface ClaudeOptions {
   effort: "low" | "medium" | "high";
   inputPricePerMtok: number;
   outputPricePerMtok: number;
-  /** store title format, e.g. "{Year range} {Brand} {Model} {Part name and location} {Part number} OEM Used" */
+  /** store title format, e.g. "{Year range} {Brand} {Model} {Part name and location} {Part number} OEM Used"
+   *  (already adapted to the part: "... {Part number} New" for a new aftermarket part) */
   titleTemplate?: string;
+  /** condition + genuine OEM / aftermarket, see lib/partKind */
+  partProfile?: { condition: string; origin: string; brand: string; oem_wording_allowed: boolean; keep_part_number: string };
   /** include the current description text so the A+ content keeps its facts */
   wantDescription?: boolean;
   /** the store's shipping policies named after a part type, e.g. { name: "Gear Box Shipping Policy", part: "transmission" } */
@@ -326,6 +346,7 @@ export async function suggestImprovements(
     item;
   const payload = {
     ...(opts.titleTemplate?.trim() ? { store_title_format: opts.titleTemplate.trim() } : {}),
+    ...(opts.partProfile ? { part_profile: opts.partProfile } : {}),
     listing,
     ...(opts.wantDescription && descriptionHtml ? { current_description_text: descriptionToText(descriptionHtml).slice(0, 4000) } : {}),
     ...(opts.partPolicies?.length ? { part_shipping_policies: opts.partPolicies } : {}),

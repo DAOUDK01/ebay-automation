@@ -144,6 +144,11 @@ export function ProposalCard({ storeId, p, onChange }: { storeId: string; p: Pro
             <StatusBadge status={p.status} />
             {p.kind === "manual" && <Badge color="indigo">manual edit</Badge>}
             {p.suggestion?.confidence && <Badge color="blue">{p.suggestion.confidence} confidence</Badge>}
+            {p.part?.label && (
+              <span title={`${p.part.reason}${p.part.partNumber ? ` · title keeps part number ${p.part.partNumber}` : ""}`}>
+                <Badge color={p.part.origin === "aftermarket" ? "yellow" : p.part.origin === "oem" ? "green" : "gray"}>{p.part.label}</Badge>
+              </span>
+            )}
             <a href={b.url || `https://www.ebay.com/itm/${p.itemId}`} target="_blank" rel="noreferrer" className="text-xs text-slate-500 hover:underline">
               {p.itemId} ↗
             </a>

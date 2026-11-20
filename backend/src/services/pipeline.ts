@@ -11,6 +11,7 @@ import { keywords, rankRelated, type RelatedItem } from "../lib/related";
 import { buildFitmentRows, gatherFitmentEvidence, type FitmentDeps } from "../lib/fitment";
 import { analyzeShipping, withKg } from "../lib/shipping";
 import { checkCompatibility, checkPrice, checkSpecifics, checkTitle } from "../lib/guardrails";
+import { adaptTitleTemplate, classifyPart, CONDITION_LABEL, partLabel } from "../lib/partKind";
 import { logger, sleep } from "../lib/logger";
 import { Batch } from "../models/Batch";
 import { Listing } from "../models/Listing";
@@ -129,15 +130,17 @@ export function buildChanges(
 ): { changes: ListingChanges; notes: string[]; suggestedCompat: FitmentRow[] } {
   const changes: ListingChanges = {};
   const notes: string[] = [];
+  const kind = classifyPart(item);
+  notes.push(`part: ${partLabel(kind)} - ${kind.reason}`);
   if (s.modules.title.enabled) {
-    const t = checkTitle(item.title, suggestion.title, s.modules.title.template);
+    const t = checkTitle(item.title, suggestion.title, s.modules.title.template, kind);
     notes.push(t.note);
     if (t.value) changes.title = t.value;
   }
   const p = checkPrice(item, suggestion.recommended_price, cost, s.modules.pricing);
   notes.push(p.note);
   if (p.value) changes.price = p.value;
-  const sp = checkSpecifics(item, suggestion.item_specifics, aspects, s.modules.specifics, specificsEvidenceNames);
+  const sp = checkSpecifics(item, suggestion.item_specifics, aspects, s.modules.specifics, specificsEvidenceNames, kind);
   notes.push(...sp.notes);
   if (sp.value) changes.itemSpecifics = sp.value;
   const c = checkCompatibility(fitmentRows, s.modules.compatibility);
@@ -164,6 +167,7 @@ export function buildChanges(
         content: suggestion.description_content,
         title: changes.title ?? item.title,
         condition: item.condition,
+        ribbon: kind.oemWording ? "Genuine OEM" : kind.condition === "new" ? "Brand New" : CONDITION_LABEL[kind.condition],
         pictures: item.pictures?.length ? item.pictures : item.imageUrl ? [item.imageUrl] : [],
         specifics: { ...item.itemSpecifics, ...(changes.itemSpecifics ?? {}) },
         compatibility: [...(item.compatibilityAll ?? item.compatibilitySample ?? []), ...(changes.compatibilityAdd ?? [])],
@@ -225,6 +229,8 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
     }
   }
   const partPolicies = policies.filter((p) => !p.copy && p.parts?.length).map((p) => ({ name: p.name, part: p.parts![0] }));
+  // new/used + genuine OEM/aftermarket: adapts the title format's fixed text and what Claude may claim
+  const kind = classifyPart(item);
 
   let result;
   try {
@@ -234,7 +240,14 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
       competitors,
       {
         ...s.claude,
-        titleTemplate: s.modules.title.enabled ? s.modules.title.template : "",
+        titleTemplate: s.modules.title.enabled ? adaptTitleTemplate(s.modules.title.template, kind) : "",
+        partProfile: {
+          condition: CONDITION_LABEL[kind.condition],
+          origin: kind.origin,
+          brand: kind.brand,
+          oem_wording_allowed: kind.oemWording,
+          keep_part_number: kind.partNumber,
+        },
         wantDescription: s.modules.description.enabled,
         partPolicies,
       },
@@ -286,6 +299,7 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
     // keep the old description only when we're replacing it, so Revert can put it back
     ...(changes.description !== undefined ? { before: { ...snapshot, descriptionHtml: item.descriptionHtml ?? "" } } : {}),
     status,
+    part: { ...kind, label: partLabel(kind) },
     suggestion: { ...result.suggestion, suggested_compatibility_rows: suggestedCompat },
     shipping,
     fitment: {

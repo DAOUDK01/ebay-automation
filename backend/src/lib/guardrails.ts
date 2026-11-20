@@ -3,6 +3,7 @@ import type { StoreSettings } from "../models/Store";
 import type { ClaudeSuggestion } from "./claude";
 import type { Aspect, CompatRow, EbayItem, FitmentRow, Specifics } from "./ebay/types";
 import { PER_COPY_SPECIFICS, toCompatRows } from "./fitment";
+import { adaptTitleTemplate, CONDITION_LABEL, isCarMakerBrand, titleHasPartNumber, type PartKind } from "./partKind";
 
 const BANNED_TITLE = /(l@@k|\bwow\b|!!|\*|\bbest\b|\bcheap\b|free shipping)/i;
 
@@ -55,7 +56,11 @@ export function keepYearRange(oldTitle: string, newTitle: string): { title: stri
   };
 }
 
-export function checkTitle(oldTitle: string, newTitle: string, template?: string): CheckResult<string> {
+/**
+ * `kind` (the part's condition + OEM/aftermarket) adapts the store format's fixed text ("OEM Used" ->
+ * "New" for a new aftermarket part) and blocks titles that misdescribe the part or drop its part number.
+ */
+export function checkTitle(oldTitle: string, newTitle: string, template?: string, kind?: PartKind): CheckResult<string> {
   let t = (newTitle || "").replace(/\s+/g, " ").trim();
   if (!t) return { value: null, note: "title unchanged" };
   const years = keepYearRange(oldTitle, t);
@@ -64,7 +69,20 @@ export function checkTitle(oldTitle: string, newTitle: string, template?: string
   if (years.note && t.length > 80) return { value: null, note: `title rejected: ${years.note}, then ${t.length} chars > 80` };
   if (t.length > 80) return { value: null, note: `title rejected: ${t.length} chars > 80` };
   if (BANNED_TITLE.test(t)) return { value: null, note: "title rejected: banned words/symbols" };
-  const missing = templateLiterals(template).filter((lit) => !t.toLowerCase().includes(lit.toLowerCase()));
+  if (kind) {
+    const label = CONDITION_LABEL[kind.condition];
+    if (!kind.oemWording && /\b(oem|genuine)\b/i.test(t)) {
+      return { value: null, note: `title rejected: says OEM/Genuine, but this is ${kind.origin === "aftermarket" ? `an aftermarket part${kind.brand ? ` (${kind.brand})` : ""}` : "not known to be a genuine part"}` };
+    }
+    const isUsed = kind.condition === "used" || kind.condition === "for_parts";
+    if (!isUsed && /\bused\b/i.test(t)) return { value: null, note: `title rejected: says Used, but the listing's condition is ${label}` };
+    if (isUsed && /\bbrand new\b|\bnew\s*$/i.test(t)) return { value: null, note: `title rejected: says New, but the listing's condition is ${label}` };
+    if (kind.partNumber && !titleHasPartNumber(t, kind.partNumber)) {
+      return { value: null, note: `title rejected: drops or changes the part number ${kind.partNumber}` };
+    }
+  }
+  const required = kind ? adaptTitleTemplate(template ?? "", kind) : template;
+  const missing = templateLiterals(required).filter((lit) => !t.toLowerCase().includes(lit.toLowerCase()));
   if (missing.length) return { value: null, note: `title rejected: missing required text ${missing.map((m) => `"${m}"`).join(", ")}` };
   if (t.length < Math.min(oldTitle.length, 80) * 0.7) return { value: null, note: "title rejected: much shorter than current" };
   return { value: t, note: years.note ? `title: ok (${years.note})` : "title: ok" };
@@ -134,6 +152,8 @@ export function checkSpecifics(
   s: StoreSettings["modules"]["specifics"],
   /** specific names used by other listings of the same part number (allowed as custom names) */
   evidenceNames: string[] = [],
+  /** an aftermarket part keeps its own Brand / Manufacturer Part Number (never the car maker's) */
+  kind?: PartKind,
 ): { value: Specifics | null; notes: string[] } {
   if (!s.enabled) return { value: null, notes: ["specifics: module disabled"] };
   const byName = new Map(aspects.map((a) => [a.name.toLowerCase(), a]));
@@ -185,6 +205,17 @@ export function checkSpecifics(
       name = a.name;
     }
     if (variation.has(name.toLowerCase())) continue;
+    if (kind?.origin === "aftermarket" && /^(brand|manufacturer part number)$/i.test(name)) {
+      if (currentLower.has(name.toLowerCase())) {
+        const cur = current[currentLower.get(name.toLowerCase())!];
+        if (JSON.stringify(cur) !== JSON.stringify(values)) notes.push(`keep '${name}': ${JSON.stringify(cur)} - an aftermarket part keeps its own ${name}`);
+        continue;
+      }
+      if (/^brand$/i.test(name) && values.some(isCarMakerBrand)) {
+        notes.push(`skip 'Brand': ${JSON.stringify(values)} - this is an aftermarket part, not made by the car maker`);
+        continue;
+      }
+    }
     if (a && a.mode === "SELECTION_ONLY") {
       const allowed = new Map(a.values.map((v) => [v.toLowerCase(), v]));
       const bad = values.filter((v) => !allowed.has(v.toLowerCase()));
