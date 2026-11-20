@@ -14,7 +14,8 @@
     "test": "tsx --test test/*.test.ts",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "seed:orders": "tsx scripts/seed-orders.ts",
-    "seed:returns-messages": "tsx scripts/seed-returns-messages.ts"
+    "seed:returns-messages": "tsx scripts/seed-returns-messages.ts",
+    "seed:feedback-inventory": "tsx scripts/seed-feedback-inventory.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",

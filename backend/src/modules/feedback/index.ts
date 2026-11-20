@@ -1,8 +1,19 @@
 /**
- * Feedback: Trading GetFeedback / RespondToFeedback / LeaveFeedback / GetItemsAwaitingFeedback.
- * Not built yet - replace this stub with a real AccountModule (see ../types.ts) and set ready: true.
- * Keep everything for this module inside src/modules/feedback/.
+ * Feedback: Trading GetFeedback / GetItemsAwaitingFeedback / GetUser (sync), RespondToFeedback / LeaveFeedback (user clicks),
+ * plus opt-in auto-positive feedback for buyers (FeedbackSettings.autoPositive, off by default).
  */
-import { stubModule } from "../stub";
+import type { AccountModule } from "../types";
+import { feedbackRouter } from "./routes";
+import { feedbackCounts, syncFeedback } from "./service";
 
-export default stubModule("feedback", "Feedback", []);
+const feedback: AccountModule = {
+  key: "feedback",
+  label: "Feedback",
+  ready: true,
+  scopes: [],
+  router: feedbackRouter(),
+  sync: syncFeedback,
+  counts: feedbackCounts,
+};
+
+export default feedback;

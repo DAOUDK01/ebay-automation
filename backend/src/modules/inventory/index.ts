@@ -1,8 +1,19 @@
 /**
- * Inventory & relist: Trading ReviseInventoryStatus / RelistFixedPriceItem / EndFixedPriceItem.
- * Not built yet - replace this stub with a real AccountModule (see ../types.ts) and set ready: true.
- * Keep everything for this module inside src/modules/inventory/.
+ * Inventory & relist: Trading GetMyeBaySelling (sync), ReviseInventoryStatus (bulk qty/price, 4 per call),
+ * RelistFixedPriceItem and EndFixedPriceItem - writes only on a user click.
  */
-import { stubModule } from "../stub";
+import type { AccountModule } from "../types";
+import { inventoryRouter } from "./routes";
+import { inventoryCounts, syncInventory } from "./service";
 
-export default stubModule("inventory", "Inventory", []);
+const inventory: AccountModule = {
+  key: "inventory",
+  label: "Inventory",
+  ready: true,
+  scopes: [],
+  router: inventoryRouter(),
+  sync: syncInventory,
+  counts: inventoryCounts,
+};
+
+export default inventory;
