@@ -23,6 +23,8 @@ export interface PartKind {
   partNumber: string;
   /** why, in plain words (shown on the review card) */
   reason: string;
+  /** the Brand specific names the car maker but the title names an aftermarket maker - it may be corrected */
+  brandSpecificWrong?: boolean;
 }
 
 /** vehicle makes: a part whose Brand is the car maker is a genuine (OEM) part */
@@ -52,10 +54,10 @@ const OE_SUPPLIERS = [
 ];
 /**
  * Common aftermarket brands - only used to spot the brand in a title when the Brand specific is missing.
- * Words that are also model names (Pilot, Crown, Spyder...) are deliberately left out.
+ * Words that are also model or part names (Pilot, Crown, Spyder, Spectra, seat belt Anchor...) are left out.
  */
 const AFTERMARKET_BRANDS = [
-  "febest", "dorman", "moog", "anchor", "westar", "dea", "monroe", "kyb", "cardone", "tyc", "depo", "spectra", "beck arnley",
+  "febest", "dorman", "moog", "westar", "dea", "monroe", "kyb", "cardone", "tyc", "depo", "beck arnley",
   "duralast", "detroit axle", "a-premium", "apremium", "mevotech", "standard motor products", "smp", "four seasons",
   "gates", "dayco", "raybestos", "wagner", "centric", "power stop", "akebono", "magnaflow", "spectra premium", "skp",
   "fel-pro", "felpro", "victor reinz", "corteco", "pronto", "rareelectrical", "unipoint", "tri-star", "trq",
@@ -135,10 +137,22 @@ export function classifyPart(item: Pick<EbayItem, "title" | "conditionId" | "con
   let origin: PartOrigin = "unknown";
   let shownBrand = brandRaw;
   let reason = "";
+  let brandSpecificWrong = false;
   const used = condition === "used" || condition === "for_parts";
+  // an aftermarket maker named in the title, written as the title writes it ("FEBEST", "Beck Arnley")
+  const titleKey = AFTERMARKET_BRANDS.find((b) => hasWord(title, b));
+  const titleBrand = titleKey
+    ? (new RegExp(`(^|[^a-z0-9])(${titleKey.split(/[\s-]+/).join("[\\s-]*")})($|[^a-z0-9])`, "i").exec(item.title)?.[2] ?? titleKey)
+    : "";
   if (hasWord(title, "aftermarket") || AFTERMARKET_WORDS.includes(brand)) {
     origin = "aftermarket";
     reason = 'the listing says "aftermarket"';
+  } else if (brand && (isMake(brand) || isOeLabel(brand)) && titleBrand) {
+    // Brand says "Acura" but the title says FEBEST: the part is FEBEST's (the Brand specific is wrong)
+    origin = "aftermarket";
+    shownBrand = titleBrand;
+    brandSpecificWrong = true;
+    reason = `the title names ${titleBrand}, an aftermarket maker (the Brand specific says ${brandRaw})`;
   } else if (brand && (isMake(brand) || isOeLabel(brand))) {
     origin = "oem";
     reason = `Brand is ${brandRaw} (the car maker's own part)`;
@@ -157,11 +171,10 @@ export function classifyPart(item: Pick<EbayItem, "title" | "conditionId" | "con
     shownBrand = "";
     reason = `Brand is "${brandRaw}" and the part is not used`;
   } else {
-    const titleBrand = AFTERMARKET_BRANDS.find((b) => hasWord(title, b));
     if (titleBrand) {
       origin = "aftermarket";
-      shownBrand = item.title.split(/\s+/).find((w) => norm(w) === titleBrand.split(" ")[0]) ?? titleBrand;
-      reason = `the title names ${shownBrand}, an aftermarket maker`;
+      shownBrand = titleBrand;
+      reason = `the title names ${titleBrand}, an aftermarket maker`;
     } else if (/\b(oem|genuine|factory|oe)\b/.test(title)) {
       origin = "oem";
       reason = "the title says OEM / genuine";
@@ -171,7 +184,34 @@ export function classifyPart(item: Pick<EbayItem, "title" | "conditionId" | "con
   }
   // unknown + used: the store sells used genuine parts, so keep its usual "OEM" wording
   const oemWording = origin === "oem" || (origin === "unknown" && used);
-  return { condition, origin, brand: origin === "oem" && !brand ? "" : shownBrand, oemWording, partNumber, reason };
+  return { condition, origin, brand: origin === "oem" && !brand ? "" : shownBrand, oemWording, partNumber, reason, brandSpecificWrong };
+}
+
+/**
+ * Words in the A+ description text that contradict the part (checked in code, not left to Claude).
+ * Returns the offending phrase, or "".
+ */
+export function descriptionConflict(text: string, k: Pick<PartKind, "condition" | "oemWording">): string {
+  const t = (text || "").replace(/\s+/g, " ");
+  const used = k.condition === "used" || k.condition === "for_parts";
+  const find = (re: RegExp) => re.exec(t)?.[0] ?? "";
+  if (!used) {
+    // a new / remanufactured part described as used
+    const hit = find(
+      /\bused (part|genuine|oem|item|unit|condition|assembly)\b|\bpulled (from|off)\b|\bpre-?owned\b|\bsalvage(d)?\b|\bsigns of (use|wear)\b|\bnormal wear\b|\b(light|minor) wear\b|\btake-?off part\b|\bremoved from (a|an|the) (vehicle|car|truck|suv)\b/i,
+    );
+    if (hit) return hit;
+  } else {
+    const hit = find(/\bbrand[- ]new\b|\bnew in (the )?box\b|\bnever (been )?used\b|\bunused\b|\bnew old stock\b|\bfactory sealed\b/i);
+    if (hit) return hit;
+  }
+  if (!k.oemWording) {
+    // aftermarket: no "genuine" claims (a plain "not genuine" / "not OEM" answer is fine)
+    const cleaned = t.replace(/\b(not|isn'?t|is not|no|non)[- ](an? )?(genuine|oem|factory)\b/gi, "");
+    const hit = /\bgenuine\b|\bfactory original\b|\boriginal equipment\b|\bOEM (part|quality|original)\b/i.exec(cleaned)?.[0] ?? "";
+    if (hit) return hit;
+  }
+  return "";
 }
 
 const CONDITION_WORD: Record<PartCondition, string | null> = { used: null, new: "New", reman: "Remanufactured", for_parts: "For Parts" };

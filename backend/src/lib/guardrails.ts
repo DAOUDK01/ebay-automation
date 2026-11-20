@@ -176,6 +176,7 @@ export function checkSpecifics(
   for (const sug of ordered) {
     let name = (sug.name || "").trim();
     let values = [...new Set((sug.values ?? []).map((v) => v.trim()).filter(Boolean))];
+    let correction = false;
     if (!name || !values.length) continue;
     const source = sug.source ?? "listing_text";
     // part-level facts Claude knows from the part number: high and medium are used, low is not
@@ -206,8 +207,11 @@ export function checkSpecifics(
     }
     if (variation.has(name.toLowerCase())) continue;
     if (kind?.origin === "aftermarket" && /^(brand|manufacturer part number)$/i.test(name)) {
-      if (currentLower.has(name.toLowerCase())) {
-        const cur = current[currentLower.get(name.toLowerCase())!];
+      const cur = currentLower.has(name.toLowerCase()) ? current[currentLower.get(name.toLowerCase())!] : null;
+      // a wrong car-make Brand ("Acura" on a FEBEST part) may be corrected to the real maker
+      const fixWrongBrand = /^brand$/i.test(name) && !!kind.brandSpecificWrong && !!cur?.some(isCarMakerBrand) && !values.some(isCarMakerBrand);
+      correction = fixWrongBrand;
+      if (cur && !fixWrongBrand) {
         if (JSON.stringify(cur) !== JSON.stringify(values)) notes.push(`keep '${name}': ${JSON.stringify(cur)} - an aftermarket part keeps its own ${name}`);
         continue;
       }
@@ -234,7 +238,7 @@ export function checkSpecifics(
     const existingKey = currentLower.get(name.toLowerCase());
     const via = source === "listing_text" ? "" : source === "other_listings" ? " (from other listings)" : " (part-number knowledge)";
     if (existingKey) {
-      if (!s.overwriteExisting || JSON.stringify(current[existingKey]) === JSON.stringify(values)) continue;
+      if ((!s.overwriteExisting && !correction) || JSON.stringify(current[existingKey]) === JSON.stringify(values)) continue;
       notes.push(`overwrite '${name}': ${JSON.stringify(current[existingKey])} -> ${JSON.stringify(values)}${via}`);
       current[existingKey] = values;
     } else {

@@ -72,6 +72,31 @@ batchesRouter.post("/:batchId/retry-errors", async (req, res) => {
   res.status(202).json({ job, count: itemIds.length });
 });
 
+/**
+ * Redo a batch with the latest rules: reject the changes still waiting for review and optimize the same
+ * listings again in a new batch. Listings already pushed (or skipped auctions) are left alone.
+ */
+batchesRouter.post("/:batchId/redo", async (req, res) => {
+  const store = await loadStore(req);
+  const batchId = String(req.params.batchId);
+  if (!isId(batchId)) throw new HttpError(404, "Batch not found");
+  if (req.body?.confirm !== true) throw new HttpError(400, "Please confirm re-running this batch");
+  const batch = await Batch.findOne({ _id: batchId, storeId: store._id });
+  if (!batch) throw new HttpError(404, "Batch not found");
+  if (batch.status === "running" || batch.status === "pushing") throw new HttpError(409, `This batch is still ${batch.status} - wait until it finishes`);
+  const rows = await Proposal.find({ batchId: batch._id, status: { $in: ["proposed", "approved", "rejected", "no_change", "error"] } })
+    .select("itemId")
+    .lean();
+  const itemIds = [...new Set(rows.map((p) => p.itemId))].slice(0, 200);
+  if (!itemIds.length) throw new HttpError(400, "Nothing to re-run - every listing in this batch was pushed or skipped");
+  // queue first: if another batch is running, nothing gets rejected
+  const { job, duplicate } = await enqueue(store._id, "batch", { itemIds, trigger: "manual" });
+  if (duplicate) throw new HttpError(409, "Another batch is already queued or running - try again when it finishes");
+  const r = await Proposal.updateMany({ batchId: batch._id, status: { $in: ["proposed", "approved"] } }, { $set: { status: "rejected" } });
+  await recountBatch(batch._id as any);
+  res.status(202).json({ job, count: itemIds.length, rejected: r.modifiedCount });
+});
+
 // ------------------------------------------------------------- proposals
 const editSchema = z.object({
   status: z.enum(["approved", "rejected", "proposed"]).optional(),

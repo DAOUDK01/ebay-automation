@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Aspect, EbayItem } from "../src/lib/ebay/types";
 import { checkSpecifics, checkTitle } from "../src/lib/guardrails";
-import { adaptTitleTemplate, classifyPart, looksLikePartNumber, partCondition, partLabel, primaryPartNumber } from "../src/lib/partKind";
+import { adaptTitleTemplate, classifyPart, descriptionConflict, looksLikePartNumber, partCondition, partLabel, primaryPartNumber } from "../src/lib/partKind";
 import { DEFAULT_SETTINGS } from "../src/models/Store";
 import { buildChanges } from "../src/services/pipeline";
 
@@ -189,6 +189,58 @@ test("pipeline: part shown in notes, title + A+ ribbon follow the part", () => {
 
   // a used genuine part still gets the Genuine OEM ribbon
   const usedItem = { ...item, ...honda() } as unknown as EbayItem;
-  const used = buildChanges(usedItem, { title: HONDA_TITLE, recommended_price: 0, item_specifics: [], description_content: content } as any, [], null, s);
+  const usedContent = { ...content, headline: "Genuine Honda Civic Headlight", intro: "A used genuine Honda headlight.", condition_notes: "Used, light scratches." };
+  const used = buildChanges(usedItem, { title: HONDA_TITLE, recommended_price: 0, item_specifics: [], description_content: usedContent } as any, [], null, s);
   assert.ok(used.changes.description?.includes(">Genuine OEM</div>"));
+  // ...and "New and unused" text on that used part is refused
+  const wrong = buildChanges(usedItem, { title: HONDA_TITLE, recommended_price: 0, item_specifics: [], description_content: content } as any, [], null, s);
+  assert.equal(wrong.changes.description, undefined);
+});
+
+test("a wrong car-make Brand loses to an aftermarket maker in the title, and can be corrected", () => {
+  const item = { ...febest({ itemSpecifics: { Brand: ["Acura"], "Manufacturer Part Number": ["HAB-133"] } }), variationNames: [] };
+  const k = classifyPart(item);
+  assert.deepEqual([k.origin, k.brand, k.brandSpecificWrong, k.oemWording], ["aftermarket", "FEBEST", true, false]);
+  assert.match(k.reason, /title names FEBEST.*Brand specific says Acura/);
+  const aspects: Aspect[] = [{ name: "Brand", required: true, usage: "RECOMMENDED", mode: "FREE_TEXT", multi: false, values: [] }];
+  const noOverwrite = { enabled: true, overwriteExisting: false, useOtherListings: true, allowKnowledge: true, allowCustomNames: true };
+  const r = checkSpecifics(item, [{ name: "Brand", values: ["FEBEST"], source: "listing_text", confidence: "high" }] as any, aspects, noOverwrite, [], k);
+  assert.deepEqual(r.value?.Brand, ["FEBEST"], "corrected even with overwrite off");
+  // multi-word brand keeps the title's spelling
+  assert.equal(classifyPart({ title: "Beck Arnley 2010 Camry Wheel Bearing 051-6250", conditionId: "1000", condition: "New", itemSpecifics: {} }).brand, "Beck Arnley");
+});
+
+test("model / part names are not brands: seat belt Anchor, Kia Spectra", () => {
+  const used = (title: string) => classifyPart({ title, conditionId: "3000", condition: "Used", itemSpecifics: {} });
+  assert.equal(used("2016-2020 Honda Pilot Front Seat Belt Anchor Bolt OEM Used").origin, "oem");
+  assert.equal(used("2004-2009 Kia Spectra Left Headlight").origin, "unknown");
+  assert.equal(used("2004-2009 Kia Spectra Left Headlight").oemWording, true);
+});
+
+test("description text must match the condition and OEM status", () => {
+  const newAfter = { condition: "new" as const, oemWording: false };
+  const usedOem = { condition: "used" as const, oemWording: true };
+  assert.equal(descriptionConflict("A used part pulled from a 2005 Acura MDX.", newAfter), "used part");
+  assert.equal(descriptionConflict("It may show light wear.", newAfter), "light wear");
+  assert.equal(descriptionConflict("Can be used with the original bolts. Brand new FEBEST bushing.", newAfter), "", "'used with' and 'brand new' are fine for a new part");
+  assert.equal(descriptionConflict("Genuine Acura quality.", newAfter), "Genuine");
+  assert.equal(descriptionConflict("Is it OEM? No - this is not a genuine Acura part, it is a FEBEST replacement. Replaces OEM number 50728-S3V-A01.", newAfter), "");
+  assert.equal(descriptionConflict("Brand new in box!", usedOem), "Brand new");
+  assert.equal(descriptionConflict("Never used.", usedOem), "Never used");
+  assert.equal(descriptionConflict("Used genuine OEM part pulled from a 2018 Civic with normal signs of use.", usedOem), "");
+});
+
+test("pipeline: A+ text that calls a new part used is not applied", () => {
+  const item = {
+    ...febest(),
+    itemId: "1", price: 25, currency: "USD", quantity: 1, quantitySold: 0, hasVariations: false, listingType: "FixedPriceItem",
+    variationNames: [], compatibilitySample: [], compatibilityAll: [], pictures: [], descriptionHtml: "",
+  } as unknown as EbayItem;
+  const content = {
+    headline: "FEBEST Bushing", intro: "Used part pulled from a running vehicle.", highlights: ["HAB-133"], fitment_summary: "Fits MDX.",
+    condition_notes: "Normal signs of use.", included: [], install_tips: "", faqs: [],
+  };
+  const r = buildChanges(item, { title: FEBEST_TITLE, recommended_price: 0, item_specifics: [], description_content: content } as any, [], null, structuredClone(DEFAULT_SETTINGS));
+  assert.equal(r.changes.description, undefined);
+  assert.ok(r.notes.some((n) => /description rejected: says "Used part".*New · Aftermarket \(FEBEST\)/.test(n)), r.notes.join(" | "));
 });

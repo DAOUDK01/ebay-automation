@@ -12,6 +12,7 @@ import { encrypt } from "../src/lib/crypto";
 import type { ClaudeSuggestion } from "../src/lib/claude";
 import type { EbayItem, ListingChanges } from "../src/lib/ebay/types";
 import { Batch } from "../src/models/Batch";
+import { Job } from "../src/models/Job";
 import { Listing } from "../src/models/Listing";
 import { Proposal } from "../src/models/Proposal";
 import { DEFAULT_SETTINGS, Store, type StoreDocument } from "../src/models/Store";
@@ -314,4 +315,33 @@ test("costs CSV import + store isolation", async () => {
   const otherCookie = other.headers.get("set-cookie")!.split(";")[0];
   const res = await fetch(`${base}/stores/${sid}`, { headers: { cookie: otherCookie } });
   assert.equal(res.status, 404);
+});
+
+test("batch redo: rejects what's waiting, re-runs the same listings (not pushed ones) in a new batch", async () => {
+  const sid = String(store._id);
+  await Job.deleteMany({ storeId: store._id });
+  const batch = await Batch.create({ storeId: store._id, number: 900, mode: "review", status: "review" });
+  const mk = (itemId: string, status: string) => Proposal.create({ storeId: store._id, batchId: batch._id, itemId, status, before: ITEM(itemId, "t") });
+  await mk("r1", "proposed");
+  await mk("r2", "approved");
+  await mk("r3", "pushed");
+  await mk("r4", "no_change");
+  await mk("r5", "skipped");
+
+  assert.equal((await call(`/stores/${sid}/batches/${batch._id}/redo`, "POST", {})).status, 400, "needs confirm");
+  const r = await call(`/stores/${sid}/batches/${batch._id}/redo`, "POST", { confirm: true });
+  assert.equal(r.status, 202, JSON.stringify(r.json));
+  assert.equal(r.json.rejected, 2);
+  assert.equal(r.json.count, 3);
+  const job = await Job.findOne({ storeId: store._id, type: "batch", status: "queued" }).lean();
+  assert.deepEqual([...(job!.payload as any).itemIds].sort(), ["r1", "r2", "r4"], "pushed and skipped listings are left alone");
+  const statuses = Object.fromEntries((await Proposal.find({ batchId: batch._id }).lean()).map((p) => [p.itemId, p.status]));
+  assert.deepEqual(statuses, { r1: "rejected", r2: "rejected", r3: "pushed", r4: "no_change", r5: "skipped" });
+
+  // another batch already queued: refused, nothing changes
+  await Proposal.updateOne({ batchId: batch._id, itemId: "r1" }, { $set: { status: "proposed" } });
+  const again = await call(`/stores/${sid}/batches/${batch._id}/redo`, "POST", { confirm: true });
+  assert.equal(again.status, 409);
+  assert.equal((await Proposal.findOne({ batchId: batch._id, itemId: "r1" }).lean())!.status, "proposed");
+  await Job.deleteMany({ storeId: store._id });
 });

@@ -11,7 +11,7 @@ import { keywords, rankRelated, type RelatedItem } from "../lib/related";
 import { buildFitmentRows, gatherFitmentEvidence, type FitmentDeps } from "../lib/fitment";
 import { analyzeShipping, withKg } from "../lib/shipping";
 import { checkCompatibility, checkPrice, checkSpecifics, checkTitle } from "../lib/guardrails";
-import { adaptTitleTemplate, classifyPart, CONDITION_LABEL, partLabel } from "../lib/partKind";
+import { adaptTitleTemplate, classifyPart, CONDITION_LABEL, descriptionConflict, partLabel } from "../lib/partKind";
 import { logger, sleep } from "../lib/logger";
 import { Batch } from "../models/Batch";
 import { Listing } from "../models/Listing";
@@ -160,8 +160,12 @@ export function buildChanges(
   }
   const d = s.modules.description;
   if (d.enabled) {
+    const conflict = hasContent(suggestion.description_content) ? descriptionConflict(contentText(suggestion.description_content!), kind) : "";
     if (!hasContent(suggestion.description_content)) {
       notes.push("description: Claude returned no content - kept current");
+    } else if (conflict) {
+      // the text contradicts the listing's condition / OEM status: keep the current description
+      notes.push(`description rejected: says "${conflict}", but this part is ${partLabel(kind)} - kept current`);
     } else {
       const html = renderAplus({
         content: suggestion.description_content,
@@ -187,6 +191,12 @@ export function buildChanges(
   }
   return { changes, notes, suggestedCompat: c.suggested };
 }
+
+/** every sentence Claude wrote for the A+ description, as one text (for the condition check) */
+const contentText = (c: NonNullable<ClaudeSuggestion["description_content"]>) =>
+  [c.headline, c.intro, ...(c.highlights ?? []), c.fitment_summary, c.condition_notes, ...(c.included ?? []), c.install_tips, ...(c.faqs ?? []).flatMap((f) => [f.q, f.a])]
+    .filter(Boolean)
+    .join("\n");
 
 async function processItem(store: StoreDocument, s: StoreSettings, deps: PipelineDeps, batchId: Types.ObjectId, itemId: string) {
   if ((await monthSpend(store._id)) >= s.claude.monthlyBudgetUsd) {

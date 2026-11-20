@@ -75,6 +75,31 @@ export default function BatchReviewPage() {
     }
   }
 
+  // listings that can be optimized again (not pushed, not skipped auctions)
+  const redoable = new Set(proposals.filter((p) => ["proposed", "approved", "rejected", "no_change", "error"].includes(p.status)).map((p) => p.itemId)).size;
+
+  async function redo() {
+    const waiting = proposed + approved;
+    if (
+      !confirm(
+        `Re-run this batch with the latest rules?\n\n` +
+          (waiting ? `${waiting} change(s) waiting for review will be rejected (nothing is sent to eBay). ` : "") +
+          `${redoable} listing(s) will be optimized again in a new batch.`,
+      )
+    )
+      return;
+    setBusy("redo");
+    try {
+      const r = await api<{ count: number; rejected: number }>(`/stores/${id}/batches/${batchId}/redo`, { body: { confirm: true } });
+      toast.success(`Rejected ${r.rejected} - re-running ${r.count} listing(s) in a new batch (see Review & batches)`);
+      mutate();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function push() {
     if (!confirm(`Push ${approved} approved change(s) to eBay now?`)) return;
     setBusy("push");
@@ -105,6 +130,17 @@ export default function BatchReviewPage() {
             {failed > 0 && (
               <Button variant="secondary" size="sm" loading={busy === "retry"} onClick={retryFailed}>
                 Retry {failed} failed
+              </Button>
+            )}
+            {redoable > 0 && !["running", "pushing"].includes(batch.status) && (
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={busy === "redo"}
+                onClick={redo}
+                title="Reject what's waiting for review and optimize these listings again with the latest rules"
+              >
+                Reject &amp; re-run
               </Button>
             )}
             <Button variant="secondary" size="sm" disabled={!proposed} loading={busy === "approve"} onClick={approveAll}>
