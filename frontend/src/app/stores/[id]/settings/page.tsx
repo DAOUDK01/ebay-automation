@@ -54,7 +54,7 @@ function PolicyList({ storeId }: { storeId: string }) {
       {isLoading ? (
         <p className="text-sm text-slate-400">Loading from eBay…</p>
       ) : error ? (
-        <p className="text-sm text-rose-600">{error.message}</p>
+        <p className="break-words text-sm text-rose-600">{error.message}</p>
       ) : (
         <>
           {brackets.length ? (

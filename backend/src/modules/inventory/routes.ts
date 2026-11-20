@@ -9,12 +9,102 @@ import type { StoreDocument } from "../../models/Store";
 import { END_REASONS, endItem, relistItem, reviseInventory, type StockChange, type Trading } from "./ebay";
 import { InventoryItem, inventorySettings } from "./model";
 import { TABS, tabFilter, type Tab } from "./service";
+import { DuplicateIgnore, findDuplicates, wouldEndWholeGroup, type DupListing } from "./duplicates";
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const PAGE_SIZE = 50;
 
 export function inventoryRouter(tradingFor: (store: StoreDocument) => Trading = (s) => clientsFor(s).trading) {
   const router = Router({ mergeParams: true });
+
+  // ------------------------------------------------------------------ duplicate listings
+  // (registered before "/:itemId/..." so "duplicates" isn't read as an item id)
+
+  /** Active listings from both the optimizer's listing sync and the inventory sync. */
+  async function duplicateGroups(storeId: StoreDocument["_id"], includeIgnored = false) {
+    const [listings, inv, ignored] = await Promise.all([
+      Listing.find({ storeId, active: true }, { itemId: 1, title: 1, sku: 1, price: 1, quantitySold: 1, watchCount: 1, imageUrl: 1 }).lean(),
+      InventoryItem.find(
+        { storeId, status: "active" },
+        { itemId: 1, title: 1, sku: 1, price: 1, quantitySold: 1, watchers: 1, imageUrl: 1, quantityAvailable: 1, startTime: 1, listingType: 1 },
+      ).lean(),
+      DuplicateIgnore.find({ storeId }, { key: 1 }).lean(),
+    ]);
+    const rows = new Map<string, DupListing>();
+    for (const i of inv) {
+      rows.set(i.itemId, {
+        itemId: i.itemId, title: i.title, sku: i.sku, price: i.price, quantitySold: i.quantitySold, watchCount: i.watchers,
+        imageUrl: i.imageUrl, quantityAvailable: i.quantityAvailable, startTime: i.startTime, listingType: i.listingType,
+      });
+    }
+    for (const l of listings) {
+      const r = rows.get(l.itemId);
+      rows.set(l.itemId, {
+        ...r,
+        itemId: l.itemId,
+        title: l.title || r?.title || "",
+        sku: l.sku || r?.sku,
+        price: l.price ?? r?.price,
+        quantitySold: Math.max(l.quantitySold ?? 0, r?.quantitySold ?? 0),
+        watchCount: Math.max(l.watchCount ?? 0, r?.watchCount ?? 0),
+        imageUrl: l.imageUrl || r?.imageUrl,
+      });
+    }
+    const ignoredKeys = new Set(ignored.map((g) => g.key));
+    return { groups: findDuplicates([...rows.values()], includeIgnored ? new Set() : ignoredKeys), scanned: rows.size, ignoredCount: ignoredKeys.size };
+  }
+
+  router.get("/duplicates", async (req, res) => {
+    const store = await loadStore(req);
+    const { groups, scanned, ignoredCount } = await duplicateGroups(store._id);
+    res.json({
+      groups,
+      scanned,
+      ignoredCount,
+      totals: { groups: groups.length, extraListings: groups.reduce((s, g) => s + g.listings.length - 1, 0) },
+    });
+  });
+
+  /** Mark a group as "not duplicates" (or bring it back with ignore: false). */
+  router.post("/duplicates/ignore", async (req, res) => {
+    const store = await loadStore(req);
+    const body = parseBody(z.object({ key: z.string().regex(/^[0-9a-f]{16}$/), ignore: z.boolean().default(true) }), req.body);
+    if (body.ignore) await DuplicateIgnore.updateOne({ storeId: store._id, key: body.key }, { $setOnInsert: { storeId: store._id, key: body.key } }, { upsert: true });
+    else await DuplicateIgnore.deleteOne({ storeId: store._id, key: body.key });
+    res.json({ ok: true });
+  });
+
+  /** End the selected duplicates on eBay (never every listing of a group). */
+  router.post("/duplicates/end", async (req, res) => {
+    const store = await loadStore(req);
+    const body = parseBody(
+      z.object({ itemIds: z.array(z.string().regex(/^\d{9,19}$/)).min(1).max(200), confirm: z.literal(true, { error: "Confirm ending these listings first" }) }),
+      req.body,
+    );
+    const { groups } = await duplicateGroups(store._id, true);
+    const inGroups = new Map(groups.flatMap((g) => g.listings.map((l) => [l.itemId, l] as const)));
+    const notDup = body.itemIds.filter((id) => !inGroups.has(id));
+    if (notDup.length) throw new HttpError(400, `Not in a duplicate group: ${notDup.slice(0, 5).join(", ")}`);
+    const whole = wouldEndWholeGroup(groups, body.itemIds);
+    if (whole.length) throw new HttpError(400, "Keep at least one listing in every group - this would end all copies of an item");
+
+    const t = tradingFor(store);
+    const results: { itemId: string; ok: boolean; error?: string }[] = [];
+    for (const itemId of [...new Set(body.itemIds)]) {
+      try {
+        const endTime = await endItem(t, itemId, "OtherListingError", inGroups.get(itemId)?.listingType ?? "");
+        await InventoryItem.updateOne(
+          { storeId: store._id, itemId },
+          { $set: { status: "ended", quantityAvailable: 0, endTime: endTime ?? new Date() } },
+        );
+        await Listing.updateOne({ storeId: store._id, itemId }, { $set: { active: false } });
+        results.push({ itemId, ok: true });
+      } catch (e: any) {
+        results.push({ itemId, ok: false, error: String(e?.message ?? e).slice(0, 300) });
+      }
+    }
+    res.json({ results, ended: results.filter((r) => r.ok).length });
+  });
 
   router.get("/", async (req, res) => {
     const store = await loadStore(req);

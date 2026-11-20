@@ -24,6 +24,8 @@ const messageSchema = new Schema(
     subject: { type: String, default: "" },
     body: { type: String, default: "" },
     bodyFetched: { type: Boolean, default: false },
+    /** how the body was extracted; bodies saved by older versions are fetched again (BODY_VERSION in sync.ts) */
+    bodyVersion: { type: Number, default: 0 },
     /** AskSellerQuestion, ResponseToASQQuestion, ContactTransactionPartner, ... */
     messageType: { type: String, default: "" },
     questionType: { type: String, default: "" },

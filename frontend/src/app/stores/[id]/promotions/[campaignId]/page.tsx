@@ -5,8 +5,9 @@ import { useParams } from "next/navigation";
 import useSWR from "swr";
 import { AddListingsPanel } from "@/components/promotions/AddListingsPanel";
 import { CampaignActions } from "@/components/promotions/CampaignActions";
-import { Alert, Badge, Card, Empty, Spinner, Stat } from "@/components/ui";
-import { fetcher, money } from "@/lib/api";
+import { CampaignAdsTable, EditCampaignButton } from "@/components/promotions/CampaignEditor";
+import { Alert, Badge, Card, Spinner, Stat } from "@/components/ui";
+import { fetcher } from "@/lib/api";
 import { CAMPAIGN_STATUS_COLOR, statusLabel, type CampaignDetail } from "@/lib/promotions";
 
 const d = (s?: string) => (s ? new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—");
@@ -35,7 +36,10 @@ export default function CampaignPage() {
               <h1 className="text-xl font-semibold text-slate-900">{c.name}</h1>
               <Badge color={CAMPAIGN_STATUS_COLOR[c.status] ?? "gray"}>{statusLabel(c.status)}</Badge>
             </div>
-            <CampaignActions storeId={id} campaign={c} onDone={() => mutate()} size="md" />
+            <div className="flex flex-wrap gap-2">
+              <EditCampaignButton storeId={id} campaign={c} onDone={() => mutate()} />
+              <CampaignActions storeId={id} campaign={c} onDone={() => mutate()} size="md" />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <Stat label="Type" value={<span className="text-base">{c.fundingModel === "COST_PER_CLICK" ? "Advanced" : "Standard"}</span>} hint={c.fundingModel === "COST_PER_CLICK" ? "Cost per click" : "Cost per sale"} />
@@ -45,43 +49,7 @@ export default function CampaignPage() {
           </div>
 
           <Card title="Promoted listings">
-            {data.ads.length ? (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px] text-sm">
-                  <thead className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
-                    <tr>
-                      <th className="py-2 pr-3">Listing</th>
-                      <th className="py-2 pr-3 text-right">Price</th>
-                      <th className="py-2 pr-3 text-right">Ad rate</th>
-                      <th className="py-2">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {data.ads.map((a) => (
-                      <tr key={a.adId}>
-                        <td className="py-2 pr-3">
-                          {a.listingId ? (
-                            <Link href={`/stores/${id}/listings/${a.listingId}`} className="text-slate-800 hover:underline">
-                              {a.title ?? a.listingId}
-                            </Link>
-                          ) : (
-                            "—"
-                          )}
-                          <div className="font-mono text-xs text-slate-400">{a.listingId}</div>
-                        </td>
-                        <td className="py-2 pr-3 text-right tabular-nums">{money(a.price)}</td>
-                        <td className="py-2 pr-3 text-right tabular-nums">{a.bidPercentage !== null ? `${a.bidPercentage}%` : "—"}</td>
-                        <td className="py-2">
-                          <Badge color={a.status === "ACTIVE" ? "green" : "gray"}>{statusLabel(a.status)}</Badge>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <Empty title="No listings in this campaign yet" />
-            )}
+            <CampaignAdsTable storeId={id} campaign={c} ads={data.ads} onDone={() => mutate()} />
           </Card>
 
           {canAdd ? (

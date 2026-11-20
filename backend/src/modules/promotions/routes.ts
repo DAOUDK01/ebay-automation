@@ -3,6 +3,7 @@
  * confirm dialog and must send `confirm: true`.
  */
 import { Router } from "express";
+import type { Types } from "mongoose";
 import { z } from "zod";
 import { clientsFor } from "../../lib/ebay/sell";
 import { loadStore } from "../../middleware/auth";
@@ -12,7 +13,7 @@ import { SyncState } from "../../models/SyncState";
 import { FinTransaction } from "../finances/models";
 import { canDo, MAX_BID, MIN_BID } from "./logic";
 import { Ad, Campaign, ItemPromotion } from "./models";
-import { addListings, campaignAction, createCampaign, type MarketingApi } from "./sync";
+import { addListings, campaignAction, createCampaign, editCampaign, removeListings, updateAdRates, type MarketingApi } from "./sync";
 
 const router = Router({ mergeParams: true });
 const DAY = 86_400_000;
@@ -128,6 +129,64 @@ router.post("/campaigns/:campaignId/:action", async (req, res, next) => {
     res.json({ campaign: await campaignAction(marketing.clientFor(store), store._id, c.campaignId, action as "pause") });
   } catch (e: any) {
     throw new HttpError(e?.status && e.status < 500 ? 400 : 502, e?.message ?? "eBay error");
+  }
+});
+
+const ebayError = (e: any) => new HttpError(e?.status && e.status < 500 ? 400 : 502, e?.message ?? "eBay error");
+
+async function editableCampaign(storeId: Types.ObjectId, campaignId: string) {
+  const c = await Campaign.findOne({ storeId, campaignId }).lean();
+  if (!c) throw new HttpError(404, "Campaign not found");
+  if (c.status === "ENDED" || c.status === "DELETED") throw new HttpError(409, "This campaign has ended and can't be changed");
+  return c;
+}
+
+/** Rename / change dates. */
+router.patch("/campaigns/:campaignId", async (req, res) => {
+  const store = await loadStore(req);
+  const body = parseBody(
+    z.object({ name: z.string().trim().min(1).max(80), startDate: z.string().nullish(), endDate: z.string().nullish(), confirm: confirmed }),
+    req.body,
+  );
+  const c = await editableCampaign(store._id, String(req.params.campaignId));
+  try {
+    res.json({ campaign: await editCampaign(marketing.clientFor(store), store._id, { campaignId: c.campaignId, startDate: c.startDate, status: c.status }, body) });
+  } catch (e: any) {
+    if (e instanceof Error && !("status" in e)) throw new HttpError(400, e.message);
+    throw ebayError(e);
+  }
+});
+
+/** New ad rate for selected listings, or every listing in the campaign (`all: true`). */
+router.post("/campaigns/:campaignId/ads/bid", async (req, res) => {
+  const store = await loadStore(req);
+  const body = parseBody(
+    z.object({ listingIds: z.array(z.string()).max(5000).optional(), all: z.boolean().optional(), bidPercentage: bid, confirm: confirmed }),
+    req.body,
+  );
+  const c = await editableCampaign(store._id, String(req.params.campaignId));
+  if (c.fundingModel !== "COST_PER_SALE") throw new HttpError(409, "Ad rates of cost-per-click campaigns are managed on eBay");
+  const ads = await Ad.find({ storeId: store._id, campaignId: c.campaignId, status: { $ne: "ARCHIVED" } }, { listingId: 1 }).lean();
+  const inCampaign = new Set(ads.map((a) => a.listingId).filter(Boolean) as string[]);
+  const ids = body.all ? [...inCampaign] : (body.listingIds ?? []).filter((x) => inCampaign.has(x));
+  if (!ids.length) throw new HttpError(400, "Pick listings that are in this campaign");
+  try {
+    res.json(await updateAdRates(marketing.clientFor(store), store._id, c.campaignId, ids, body.bidPercentage));
+  } catch (e: any) {
+    throw ebayError(e);
+  }
+});
+
+/** Take selected listings out of the campaign. */
+router.post("/campaigns/:campaignId/ads/remove", async (req, res) => {
+  const store = await loadStore(req);
+  const body = parseBody(z.object({ listingIds: z.array(z.string()).min(1).max(5000), confirm: confirmed }), req.body);
+  const c = await editableCampaign(store._id, String(req.params.campaignId));
+  if (c.rulesBased) throw new HttpError(409, "This campaign picks its listings by rules - change them on eBay");
+  try {
+    res.json(await removeListings(marketing.clientFor(store), store._id, c.campaignId, body.listingIds));
+  } catch (e: any) {
+    throw ebayError(e);
   }
 });
 

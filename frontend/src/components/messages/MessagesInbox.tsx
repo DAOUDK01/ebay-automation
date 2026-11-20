@@ -7,12 +7,12 @@ import { fetcher, timeAgo } from "@/lib/api";
 import type { MessageThread, ThreadsResponse } from "@/lib/messages";
 import { ThreadView } from "./ThreadView";
 
-export function MessagesInbox({ storeId }: { storeId: string }) {
+export function MessagesInbox({ storeId, initialThread = null }: { storeId: string; initialThread?: string | null }) {
   const [unread, setUnread] = useState(false);
   const [q, setQ] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialThread);
 
   useEffect(() => setPage(1), [unread, search]);
   const key = `/stores/${storeId}/messages/threads?unread=${unread ? 1 : ""}&q=${encodeURIComponent(search)}&page=${page}`;
@@ -52,7 +52,7 @@ export function MessagesInbox({ storeId }: { storeId: string }) {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-5">
-        <div className={cx("lg:col-span-2", selected && "hidden lg:block")}>
+        <div className={cx("min-w-0 lg:col-span-2", selected && "hidden lg:block")}>
           {error ? (
             <Empty title="Couldn't load messages">{error.message}</Empty>
           ) : !data ? (
@@ -74,7 +74,7 @@ export function MessagesInbox({ storeId }: { storeId: string }) {
             </>
           )}
         </div>
-        <div className={cx("lg:col-span-3", !selected && "hidden lg:block")}>
+        <div className={cx("min-w-0 lg:col-span-3", !selected && "hidden lg:block")}>
           {selected ? (
             <>
               <button type="button" className="mb-3 text-sm font-medium text-brand-700 lg:hidden" onClick={() => setSelected(null)}>

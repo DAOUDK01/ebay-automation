@@ -6,6 +6,7 @@
 import {
   BarChart3,
   Boxes,
+  CopyX,
   History,
   LayoutDashboard,
   MessageSquare,
@@ -76,6 +77,7 @@ export const STORE_NAV: NavSection[] = [
     title: "Operations",
     items: [
       { label: "Inventory & restock", icon: Boxes, path: "inventory", module: "inventory", badge: "lowStock", description: "Stock, quantities and relisting" },
+      { label: "Duplicate listings", icon: CopyX, path: "duplicates", module: "inventory", description: "Find the same item listed twice and end the extra copies" },
       { label: "Shipping", icon: Truck, path: "shipping", module: "shipping", badge: "awaitingShipment", description: "Ship orders and manage policies" },
     ],
   },

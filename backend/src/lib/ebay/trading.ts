@@ -207,7 +207,10 @@ export class TradingClient {
     const body =
       `<?xml version="1.0" encoding="utf-8"?><${name}Request xmlns="urn:ebay:apis:eBLBaseComponents">` +
       `<ErrorLanguage>en_US</ErrorLanguage><WarningLevel>High</WarningLevel>${innerXml}</${name}Request>`;
+    let lastError = "";
     for (let attempt = 1; attempt <= retries; attempt++) {
+      // outside the network retry: a rejected/expired account token is not a network blip - fail at once
+      const token = await this.getToken();
       let res: Response;
       try {
         res = await fetch(`${env.ebay.apiBase}/ws/api.dll`, {
@@ -216,19 +219,21 @@ export class TradingClient {
             "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
             "X-EBAY-API-CALL-NAME": name,
             "X-EBAY-API-SITEID": String(siteId),
-            "X-EBAY-API-IAF-TOKEN": await this.getToken(),
+            "X-EBAY-API-IAF-TOKEN": token,
             "Content-Type": "text/xml",
           },
           body,
         });
-      } catch (e) {
+      } catch (e: any) {
+        lastError = String(e?.message ?? e);
         logger.warn(`${name} network error, retry ${attempt}`, e);
-        await sleep(10_000 * attempt);
+        if (attempt < retries) await sleep(10_000 * attempt);
         continue;
       }
       if (res.status >= 500) {
+        lastError = `HTTP ${res.status}`;
         logger.warn(`${name} HTTP ${res.status}, retry ${attempt}`);
-        await sleep(10_000 * attempt);
+        if (attempt < retries) await sleep(10_000 * attempt);
         continue;
       }
       const doc = parser.parse(await res.text());
@@ -246,7 +251,7 @@ export class TradingClient {
       }
       throw new EbayApiError(`${name} failed: ${msgs.join("; ") || `HTTP ${res.status}`}`);
     }
-    throw new EbayApiError(`${name} failed after ${retries} attempts`);
+    throw new EbayApiError(`${name} failed after ${retries} attempts${lastError ? `: ${lastError}` : ""}`);
   }
 
   async getUserId(): Promise<string> {

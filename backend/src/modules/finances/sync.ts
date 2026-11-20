@@ -2,7 +2,7 @@
 import type { Types } from "mongoose";
 import type { SyncContext, SyncResult } from "../types";
 import { FinancesClient, needsDigitalSignature, type FinancesApi } from "./client";
-import { dateFilter, mapPayout, mapTransaction, typeFilter } from "./logic";
+import { dateFilter, mapPayout, mapTransaction } from "./logic";
 import { FinTransaction, FundsSummary, Payout } from "./models";
 
 export interface FinancesCursor {
@@ -128,8 +128,9 @@ export async function syncFinances(ctx: SyncContext, api: FinancesApi = finances
   let newestTx: Date | null = cur.transactionDate ? new Date(cur.transactionDate) : null;
   let batch: any[] = [];
   let txs = 0;
+  // every type (eBay documents transactionType with a single value; other types are simply ignored by the maths)
   for await (const raw of api.paged("/sell/finances/v1/transaction", "transactions", {
-    filter: `${dateFilter("transactionDate", txFrom)},${typeFilter()}`,
+    filter: dateFilter("transactionDate", txFrom),
     sort: "transactionDate",
   })) {
     batch.push(raw);

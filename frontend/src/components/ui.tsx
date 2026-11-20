@@ -118,7 +118,7 @@ export function Toggle({ checked, onChange, label, disabled }: { checked: boolea
         aria-checked={checked}
         disabled={disabled}
         onClick={() => onChange(!checked)}
-        className={cx("relative h-5 w-9 rounded-full transition", checked ? "bg-brand-600" : "bg-slate-300")}
+        className={cx("relative h-5 w-9 shrink-0 rounded-full transition", checked ? "bg-brand-600" : "bg-slate-300")}
       >
         <span className={cx("absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition", checked ? "left-4" : "left-0.5")} />
       </button>

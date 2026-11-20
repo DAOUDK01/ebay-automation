@@ -323,3 +323,64 @@ test("API: threads, read, reply (confirm-gated), templates, Claude draft", async
   assert.equal((await req(`/templates/${tid}`, undefined, "DELETE")).status, 200);
   assert.equal((await (await req("/templates")).json()).templates.length, 0);
 });
+
+// A trimmed copy of the HTML email eBay returns in GetMyMessages <Text>: logo, header table, the buyer's
+// words inside <div id="UserInputtedText">, buttons and a footer.
+const EBAY_EMAIL = `<!DOCTYPE html><html><head><title>eBay</title><style>.x{color:red}</style></head><body>
+<table><tr><td><img src="https://p.ebaystatic.com/logo.png" alt="eBay"></td></tr>
+<tr><td>New message from: <a href="https://www.ebay.com/usr/buyer_bob">buyer_bob</a> (12<img src="star.gif">)</td></tr>
+<tr><td><div id="UserInputtedText">Hi,<br />Will this fit my 2019 Camry SE?<br><br>It&#39;s the 2.5L &amp; I need it by Friday.<br />Thanks,<br>Bob</div></td></tr>
+<tr><td><a href="https://www.ebay.com/msg/reply">Reply</a></td></tr>
+<tr><td>Item ID: 256100000001 &nbsp; End date: Dec-01-26</td></tr>
+<tr><td>Only purchases on eBay are covered by the eBay purchase protection programs. Email reference id: [#a05-xyz#]_[#123#]</td></tr>
+</table></body></html>`;
+
+test("message text: only the buyer's words from eBay's email, line breaks and symbols kept", async () => {
+  const { extractUserText, htmlToPlain } = await import("../src/modules/messages/trading");
+  assert.equal(
+    messageBody({ Text: EBAY_EMAIL }),
+    "Hi,\nWill this fit my 2019 Camry SE?\n\nIt's the 2.5L & I need it by Friday.\nThanks,\nBob",
+  );
+  assert.ok(!messageBody({ Text: EBAY_EMAIL }).includes("Email reference"), "no eBay template text");
+  // no UserInputtedText div -> whole HTML as text, still readable
+  assert.equal(extractUserText("<p>Line one</p><p>Line&nbsp;two &rsquo;ok&rsquo;</p>"), "Line one\nLine two 'ok'");
+  assert.equal(htmlToPlain("a&#x41;&#66;&unknown;"), "aAB&unknown;");
+  // eBay system senders
+  const { isSystemSender } = await import("../src/modules/messages/trading");
+  assert.equal(isSystemSender("eBay"), true);
+  assert.equal(isSystemSender("eBay Customer Service"), true);
+  assert.equal(isSystemSender("ebaybuyer123"), false);
+});
+
+test("sync: old bodies are re-fetched once with the new extraction; orphan replies join the buyer's thread", async () => {
+  const { attachOrphans, BODY_VERSION } = await import("../src/modules/messages/sync");
+  const store = await makeStore();
+  // a body saved by the previous version (whole email flattened)
+  await Message.create({
+    storeId: store._id, key: "OLD-1", messageId: "800001", source: "my_messages", threadKey: "buyer_bob|256100000001",
+    direction: "in", sender: "buyer_bob", buyer: "buyer_bob", itemId: "256100000001", body: "eBay New message from buyer_bob Hi ... Email reference id",
+    bodyFetched: true, receivedAt: new Date(Date.now() - 3600_000),
+  });
+  // my reply from the Sent folder without an item number
+  await Message.create({
+    storeId: store._id, key: "SENT-1", messageId: "800002", source: "my_messages", threadKey: "buyer_bob|",
+    direction: "out", sender: SELLER, buyer: "buyer_bob", itemId: "", body: "Yes it fits", bodyFetched: true, bodyVersion: BODY_VERSION,
+    receivedAt: new Date(),
+  });
+  const t = fakeTrading();
+  (t as any).call = async (name: string, xml: string) => {
+    if (name === "GetMyMessages" && xml.includes("ReturnMessages")) {
+      const ids = [...xml.matchAll(/<MessageID>(.*?)<\/MessageID>/g)].map((m) => m[1]);
+      return { Messages: { Message: ids.map((id) => ({ MessageID: id, Text: EBAY_EMAIL })) } };
+    }
+    if (name === "GetMyMessages") return { Messages: {}, PaginationResult: { TotalNumberOfPages: "1" } };
+    return { MemberMessage: {}, PaginationResult: { TotalNumberOfPages: "1" } };
+  };
+  await syncMessages({ store, clients: { trading: t } as any, cursor: null, lastSuccessAt: null, log: () => {} });
+  const old = await Message.findOne({ storeId: store._id, key: "OLD-1" }).lean();
+  assert.match(old!.body, /^Hi,\nWill this fit/);
+  assert.equal(old!.bodyVersion, BODY_VERSION);
+  const sent = await Message.findOne({ storeId: store._id, key: "SENT-1" }).lean();
+  assert.equal(sent!.threadKey, "buyer_bob|256100000001", "reply joined the item conversation");
+  assert.equal(await attachOrphans(store._id), 0, "nothing left to move");
+});

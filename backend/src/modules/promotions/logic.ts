@@ -96,6 +96,48 @@ export function buildBulkAdsPayloads(listingIds: string[], bidPercentage: number
   return out;
 }
 
+/** bulk_update_ads_bid_by_listing_id bodies - same shape and limits as creating ads. */
+export const buildBulkBidPayloads = buildBulkAdsPayloads;
+
+/** bulk_delete_ads_by_listing_id bodies (chunks of 500). */
+export function buildBulkDeletePayloads(listingIds: string[]) {
+  const ids = [...new Set(listingIds.map((s) => String(s).trim()).filter((s) => /^\d{9,19}$/.test(s)))];
+  const out: { requests: { listingId: string }[] }[] = [];
+  for (let i = 0; i < ids.length; i += BULK_LIMIT) out.push({ requests: ids.slice(i, i + BULK_LIMIT).map((listingId) => ({ listingId })) });
+  return out;
+}
+
+export interface CampaignEdit {
+  name: string;
+  /** only used while the campaign hasn't started yet */
+  startDate?: string | null;
+  /** "" / null = no end date */
+  endDate?: string | null;
+}
+
+/**
+ * update_campaign_identification body. eBay keeps the start date of a campaign that already started,
+ * so we resend the current one then; a new end date must be after both the start and now.
+ */
+export function buildIdentificationPayload(input: CampaignEdit, current: { startDate?: Date | string | null; status?: string | null }, now = new Date()) {
+  const name = input.name.trim();
+  if (!name || name.length > 80) throw new Error("Campaign name must be 1-80 characters");
+  const day = (v: string, end: boolean) => new Date(/^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T${end ? "23:59:59" : "00:00:00"}Z` : v);
+  const started = current.status === "RUNNING" || current.status === "PAUSED" || current.status === "SYSTEM_PAUSED" || current.status === "ENDING_SOON";
+  let start = current.startDate ? new Date(current.startDate) : now;
+  if (!started && input.startDate) {
+    start = day(input.startDate, false);
+    if (Number.isNaN(start.getTime())) throw new Error("Invalid start date");
+    if (start.getTime() <= now.getTime()) start = new Date(now.getTime() + 5 * 60_000);
+  }
+  let end: Date | undefined;
+  if (input.endDate) {
+    end = day(input.endDate, true);
+    if (Number.isNaN(end.getTime()) || end <= start || end <= now) throw new Error("End date must be in the future and after the start date");
+  }
+  return { campaignName: name, startDate: start.toISOString(), ...(end ? { endDate: end.toISOString() } : {}) };
+}
+
 export type CampaignAction = "pause" | "resume" | "end";
 /** Which status a campaign can go to from where it is. */
 export function canDo(status: string | undefined | null, action: CampaignAction) {

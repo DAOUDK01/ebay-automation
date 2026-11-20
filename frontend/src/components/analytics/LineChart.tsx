@@ -26,12 +26,18 @@ export function LineChart({
   points,
   colorClass = "text-brand-600",
   unit = "",
+  periodLabel = "in 30 days",
+  format,
 }: {
   title: string;
   total: string;
   points: { day: string; value: number }[];
   colorClass?: string;
   unit?: string;
+  /** e.g. "in 7 days" */
+  periodLabel?: string;
+  /** hover value formatter (e.g. money) */
+  format?: (n: number) => string;
 }) {
   const ref = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -66,14 +72,14 @@ export function LineChart({
           {hp ? (
             <>
               <span className="font-semibold text-slate-900">
-                {hp.value.toLocaleString()}
+                {format ? format(hp.value) : hp.value.toLocaleString()}
                 {unit}
               </span>{" "}
               on {dayLabel(hp.day)}
             </>
           ) : (
             <>
-              <span className="font-semibold text-slate-900">{total}</span> in 30 days
+              <span className="font-semibold text-slate-900">{total}</span> {periodLabel}
             </>
           )}
         </div>
@@ -84,7 +90,7 @@ export function LineChart({
           viewBox={`0 0 ${W} ${H}`}
           className={`h-auto w-full touch-none select-none ${colorClass}`}
           role="img"
-          aria-label={`${title}, last 30 days`}
+          aria-label={`${title}, ${periodLabel}`}
           onPointerMove={onMove}
           onPointerLeave={() => setHover(null)}
         >

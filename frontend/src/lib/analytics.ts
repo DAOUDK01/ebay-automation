@@ -36,10 +36,23 @@ export interface AccountHealth {
   fetchedAt: string;
 }
 
+export type RangeDays = 7 | 30 | 90;
+
+export interface TrafficTotals {
+  impressions: number;
+  views: number;
+  transactions: number;
+  ctr: number | null;
+  conversion: number | null;
+}
+
 export interface AnalyticsOverview {
   hasData: boolean;
+  range: { days: RangeDays; start: string; end: string };
   days: TrafficDayPoint[];
-  totals: { impressions: number; views: number; transactions: number; ctr: number | null; conversion: number | null };
+  totals: TrafficTotals;
+  previous: TrafficTotals | null;
+  change: { impressions: number | null; views: number | null; transactions: number | null } | null;
   health: AccountHealth | null;
   thresholds: Record<string, { label: string; topRated: number; aboveStandard: number }>;
   sync: SyncInfo | null;
@@ -71,3 +84,25 @@ export const LEVEL_LABEL: Record<string, string> = {
   ABOVE_STANDARD: "Above Standard",
   BELOW_STANDARD: "Below Standard",
 };
+
+export interface SalesTotals {
+  orders: number;
+  revenue: number;
+  units: number;
+  avgOrderValue: number;
+  cancelled: number;
+  refunded: number;
+  refundAmount: number;
+}
+
+export interface SalesReport {
+  hasOrders: boolean;
+  range: { days: RangeDays; start: string; end: string };
+  currency: string;
+  totals: SalesTotals;
+  previous: SalesTotals;
+  change: { revenue: number | null; orders: number | null; units: number | null; avgOrderValue: number | null };
+  days: { day: string; revenue: number; orders: number }[];
+  topItems: { itemId: string; title: string; image: string; units: number; revenue: number; orders: number }[];
+  weekday: { day: string; orders: number; revenue: number }[];
+}

@@ -36,10 +36,10 @@ export default function FeedbackPage() {
         </Alert>
       )}
       <div className="grid gap-4 xl:grid-cols-3">
-        <div className="xl:col-span-2">
+        <div className="min-w-0 xl:col-span-2">
           <FeedbackTable storeId={id} onChanged={refresh} />
         </div>
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <AwaitingFeedback storeId={id} defaultText={data.settings.autoText} onChanged={refresh} />
           <AutoFeedbackCard storeId={id} settings={data.settings} onSaved={() => mutate()} />
         </div>

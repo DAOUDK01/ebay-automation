@@ -91,7 +91,8 @@ export function mapTransaction(t: any): MappedTransaction {
     bookingEntry: t.bookingEntry,
     amount: round2(sign * num(t.amount?.value)),
     currency: t.amount?.currency || "USD",
-    feeTotal: round2(lineFees || num(t.totalFeeAmount?.value)),
+    // `amount` is net of ALL fees, so the order-level total is the right one to add back; lines may miss some
+    feeTotal: round2(num(t.totalFeeAmount?.value) || lineFees),
     feeBasis: num(t.totalFeeBasisAmount?.value),
     feeType: t.feeType,
     orderId: t.orderId ?? ref("ORDER_ID")[0],

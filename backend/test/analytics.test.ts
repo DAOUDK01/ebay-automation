@@ -127,7 +127,12 @@ test("sync: daily + listing snapshots (old listings dropped), health, missing se
   const r = await syncAnalytics(ctxFor(store, sell), new Date("2026-11-20T15:00:00Z"));
   assert.deepEqual(r.cursor, { lastDay: "2026-11-19" });
   assert.match(r.summary!, /2 days, 2 listings, top rated/);
-  assert.equal(sell.calls.find((c) => c.query.dimension === "DAY")?.query.filter, "marketplace_ids:{EBAY_US},date_range:[20261021..20261119]");
+  // 180 days of daily traffic in two 90-day calls (enough to compare a 90-day range with the one before)
+  assert.deepEqual(
+    sell.calls.filter((c) => c.query.dimension === "DAY").map((c) => c.query.filter),
+    ["marketplace_ids:{EBAY_US},date_range:[20260524..20260821]", "marketplace_ids:{EBAY_US},date_range:[20260822..20261119]"],
+  );
+  assert.equal(sell.calls.find((c) => c.query.dimension === "LISTING")?.query.filter, "marketplace_ids:{EBAY_US},date_range:[20261021..20261119]");
 
   const days = await TrafficDay.find({ storeId: store._id }).sort({ day: 1 }).lean();
   assert.deepEqual(days.map((d) => [d.day, d.views, d.transactions]), [["2026-11-18", 30, 1], ["2026-11-19", 50, 3]]);
@@ -176,4 +181,44 @@ test("API: overview fills 30 days, listings joined, views-but-no-sales list", as
   } finally {
     server.close();
   }
+});
+
+test("sales report: revenue, orders, AOV, units, refunds, best sellers, weekday, vs previous period", async () => {
+  const { salesReport, change, toRange } = await import("../src/modules/analytics/sales");
+  const now = new Date("2026-11-20T15:00:00Z");
+  const o = (id: string, daysAgo: number, total: number, extra: any = {}) => ({
+    orderId: id,
+    status: "shipped",
+    creationDate: new Date(now.getTime() - daysAgo * 86_400_000),
+    totals: { total, currency: "USD" },
+    lineItems: [{ itemId: extra.itemId ?? "111", title: extra.title ?? "Headlight", qty: extra.qty ?? 1, total }],
+    refunds: extra.refunds ?? [],
+    ...extra,
+  });
+  const r = salesReport(
+    [
+      o("A", 0, 100),
+      o("B", 2, 50, { itemId: "222", title: "Mirror", qty: 2 }),
+      o("C", 3, 80, { status: "cancelled" }),
+      o("D", 5, 30, { refunds: [{ amount: 30 }], status: "refunded" }),
+      o("P1", 9, 60), // previous 7-day period
+      o("OLD", 40, 999), // outside both
+    ],
+    7,
+    now,
+  );
+  assert.equal(r.days.length, 7);
+  assert.deepEqual(
+    { orders: r.totals.orders, revenue: r.totals.revenue, units: r.totals.units, aov: r.totals.avgOrderValue, cancelled: r.totals.cancelled, refunded: r.totals.refunded },
+    { orders: 3, revenue: 180, units: 4, aov: 60, cancelled: 1, refunded: 1 },
+  );
+  assert.equal(r.previous.revenue, 60);
+  assert.equal(r.change.revenue, 200);
+  assert.deepEqual(r.topItems.map((i) => i.itemId), ["111", "222"]);
+  assert.equal(r.days.at(-1)!.revenue, 100, "today included");
+  assert.equal(r.weekday.reduce((s, w) => s + w.orders, 0), 3);
+  assert.equal(change(5, 0), null);
+  assert.equal(change(0, 0), 0);
+  assert.equal(toRange("90"), 90);
+  assert.equal(toRange("365"), 30, "unknown ranges fall back to 30 days");
 });

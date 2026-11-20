@@ -208,3 +208,102 @@ test("API: writes need confirm, then send the right eBay calls; guards on status
     server.close();
   }
 });
+
+test("campaign edits: payloads for rename/dates, ad-rate changes and removals", async () => {
+  const { buildIdentificationPayload, buildBulkDeletePayloads, buildBulkBidPayloads } = await import("../src/modules/promotions/logic");
+  const now = new Date("2026-11-20T10:00:00Z");
+  // running campaign: start date kept, name + end date change
+  const running = buildIdentificationPayload({ name: " Brakes Q1 ", startDate: "2027-01-01", endDate: "2027-03-31" }, { startDate: "2026-10-01T00:00:00Z", status: "RUNNING" }, now);
+  assert.deepEqual(running, { campaignName: "Brakes Q1", startDate: "2026-10-01T00:00:00.000Z", endDate: "2027-03-31T23:59:59.000Z" });
+  // scheduled campaign: start can move; no end date = open-ended
+  const scheduled = buildIdentificationPayload({ name: "Later", startDate: "2027-02-01", endDate: "" }, { startDate: "2027-01-01", status: "SCHEDULED" }, now);
+  assert.equal(scheduled.startDate, "2027-02-01T00:00:00.000Z");
+  assert.equal("endDate" in scheduled, false);
+  assert.throws(() => buildIdentificationPayload({ name: "x", endDate: "2026-01-01" }, { startDate: "2025-01-01", status: "RUNNING" }, now), /future/);
+  assert.throws(() => buildIdentificationPayload({ name: "  " }, { status: "RUNNING" }, now), /name/);
+  assert.deepEqual(buildBulkDeletePayloads(["256100000001", "256100000001", "bad"]), [{ requests: [{ listingId: "256100000001" }] }]);
+  assert.deepEqual(buildBulkBidPayloads(["256100000001"], 7.25), [{ requests: [{ listingId: "256100000001", bidPercentage: "7.3" }] }]);
+});
+
+test("API: edit campaign, change ad rates (selected / all), remove listings - confirm-gated, only own ads", async () => {
+  const campaigns: any[] = [
+    { campaignId: "E1", campaignName: "Brakes", campaignStatus: "RUNNING", fundingStrategy: { fundingModel: "COST_PER_SALE", bidPercentage: "5.0" }, startDate: "2026-10-01T00:00:00Z" },
+  ];
+  const ads: any[] = [
+    { adId: "A1", listingId: "256100000011", bidPercentage: "5.0", adStatus: "ACTIVE" },
+    { adId: "A2", listingId: "256100000012", bidPercentage: "5.0", adStatus: "ACTIVE" },
+  ];
+  const posts: { path: string; body: any }[] = [];
+  const fake = {
+    async get(path: string) {
+      return campaigns.find((c) => path.endsWith(`/ad_campaign/${c.campaignId}`));
+    },
+    async post(path: string, body: any) {
+      posts.push({ path, body });
+      if (path.endsWith("update_campaign_identification")) {
+        Object.assign(campaigns[0], { campaignName: body.campaignName, endDate: body.endDate });
+        return null;
+      }
+      if (path.endsWith("bulk_update_ads_bid_by_listing_id")) {
+        for (const r of body.requests) ads.find((a) => a.listingId === r.listingId).bidPercentage = r.bidPercentage;
+        return { responses: body.requests.map((r: any) => ({ listingId: r.listingId, statusCode: 200 })) };
+      }
+      if (path.endsWith("bulk_delete_ads_by_listing_id")) {
+        for (const r of body.requests) ads.splice(ads.findIndex((a) => a.listingId === r.listingId), 1);
+        return { responses: body.requests.map((r: any) => ({ listingId: r.listingId, statusCode: 200 })) };
+      }
+      throw new Error(`unexpected POST ${path}`);
+    },
+    async *paged(path: string) {
+      if (path.endsWith("/ad")) yield* ads;
+      else if (path.endsWith("/ad_campaign")) yield* campaigns;
+    },
+  };
+  const original = marketing.clientFor;
+  marketing.clientFor = () => fake as any;
+  const server = createApp().listen(0);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  try {
+    const reg = await fetch(`${base}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: `e${Date.now()}@x.test`, password: "password-123", name: "E" }),
+    });
+    const cookie = reg.headers.get("set-cookie")!.split(";")[0];
+    const me = await (await fetch(`${base}/auth/me`, { headers: { cookie } })).json();
+    const store = await makeStore(me.user.id ?? me.user._id);
+    const { refreshCampaign } = await import("../src/modules/promotions/sync");
+    await refreshCampaign(fake as any, store._id, campaigns[0]);
+    const call = (method: string, p: string, body: any) =>
+      fetch(`${base}/stores/${store._id}/promotions/campaigns/E1${p}`, { method, headers: { cookie, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+    assert.equal((await call("PATCH", "", { name: "Renamed" })).status, 400, "needs confirm");
+    assert.equal(posts.length, 0);
+    const edited = await call("PATCH", "", { name: "Brakes - winter", endDate: "2030-01-31", confirm: true });
+    assert.equal(edited.status, 200);
+    assert.equal((await edited.json()).campaign.name, "Brakes - winter");
+    assert.equal(posts[0].body.startDate, "2026-10-01T00:00:00.000Z", "running campaign keeps its start");
+
+    // selected listings; a listing not in the campaign is ignored
+    const sel = await call("POST", "/ads/bid", { listingIds: ["256100000011", "999999999999"], bidPercentage: 8, confirm: true });
+    assert.equal(sel.status, 200);
+    assert.deepEqual(posts[1].body.requests, [{ listingId: "256100000011", bidPercentage: "8.0" }]);
+    const allRes = await call("POST", "/ads/bid", { all: true, bidPercentage: 6.5, confirm: true });
+    assert.equal(allRes.status, 200);
+    assert.equal(posts[2].body.requests.length, 2);
+    assert.equal((await call("POST", "/ads/bid", { listingIds: ["999999999999"], bidPercentage: 6, confirm: true })).status, 400);
+    assert.equal((await call("POST", "/ads/bid", { all: true, bidPercentage: 1, confirm: true })).status, 400, "below 2%");
+
+    const removed = await call("POST", "/ads/remove", { listingIds: ["256100000012"], confirm: true });
+    assert.equal(removed.status, 200);
+    assert.equal((await removed.json()).campaign.adCount, 1);
+    assert.equal(await Ad.countDocuments({ storeId: store._id, campaignId: "E1" }), 1);
+
+    // ended campaigns can't be changed
+    await Campaign.updateOne({ storeId: store._id, campaignId: "E1" }, { $set: { status: "ENDED" } });
+    assert.equal((await call("PATCH", "", { name: "x", confirm: true })).status, 409);
+  } finally {
+    marketing.clientFor = original;
+    server.close();
+  }
+});

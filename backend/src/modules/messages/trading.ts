@@ -2,7 +2,7 @@
  * Trading API calls for messages, kept in this module (uses the shared TradingClient.call).
  * Mapping and request bodies are pure functions so tests can check them without eBay.
  */
-import { htmlToText, xmlEscape, type TradingClient } from "../../lib/ebay/trading";
+import { xmlEscape, type TradingClient } from "../../lib/ebay/trading";
 import { threadKeyOf } from "./model";
 
 type Caller = Pick<TradingClient, "call">;
@@ -45,8 +45,44 @@ export interface MappedMessage {
   expiresAt?: Date | null;
 }
 
-/** eBay's own notifications (sender "eBay") are not buyer conversations. */
-export const isSystemSender = (sender: string) => /^ebay$/i.test(sender.trim()) || sender.trim() === "";
+/** eBay's own notifications (sender "eBay", "eBay Customer Service", ...) are not buyer conversations. */
+export const isSystemSender = (sender: string) => /^ebay(\s|$)/i.test(sender.trim()) || sender.trim() === "";
+
+const ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
+  rsquo: "'", lsquo: "'", rdquo: '"', ldquo: '"', hellip: "...", ndash: "-", mdash: "-",
+};
+
+/** HTML -> readable text keeping line breaks (eBay message emails use <br> and <div>s). */
+export function htmlToPlain(html: string): string {
+  return (html || "")
+    .replace(/<(script|style|head|title)\b[\s\S]*?<\/(script|style|head|title)>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|tr|li|h[1-6]|table)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (m, e: string) => {
+      if (e[0] === "#") {
+        const n = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : Number(e.slice(1));
+        return Number.isFinite(n) && n > 0 ? String.fromCodePoint(n) : m;
+      }
+      return ENTITIES[e.toLowerCase()] ?? m;
+    })
+    .split("\n")
+    .map((l) => l.replace(/[ \t ]+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * The buyer's own words from an eBay message email. eBay wraps them in <div id="UserInputtedText">
+ * inside a full notification email (logo, buttons, footer); everything outside that div is template.
+ */
+export function extractUserText(html: string): string {
+  const m = /<div[^>]*\bid\s*=\s*["']?UserInputtedText["']?[^>]*>([\s\S]*?)<\/div>/i.exec(html || "");
+  return htmlToPlain(m ? m[1] : html);
+}
 
 /** GetMyMessages <Message> (headers) -> row. FolderID 1 = Sent. */
 export function mapMyMessage(m: any, sellerId: string): MappedMessage {
@@ -81,11 +117,11 @@ export function mapMyMessage(m: any, sellerId: string): MappedMessage {
   };
 }
 
-/** GetMyMessages ReturnMessages <Message> -> plain-text body (Content is plain text; Text is eBay's HTML email). */
+/** GetMyMessages ReturnMessages <Message> -> plain-text body (Content when eBay sends it, else the user text in Text's HTML email). */
 export function messageBody(m: any): string {
-  const content = s(m.Content).trim();
+  const content = htmlToPlain(s(m.Content));
   if (content) return content.slice(0, 8000);
-  return htmlToText(s(m.Text), 8000);
+  return extractUserText(s(m.Text)).slice(0, 8000);
 }
 
 /** GetMemberMessages <MemberMessageExchange> -> the question (+ our earlier answers). */
@@ -109,7 +145,7 @@ export function mapMemberExchange(ex: any, sellerId: string): MappedMessage[] {
     itemId,
     itemTitle: s(ex.Item?.Title),
     subject: s(q.Subject),
-    body: s(q.Body).slice(0, 8000),
+    body: htmlToPlain(s(q.Body)).slice(0, 8000),
     bodyFetched: true,
     messageType: s(q.MessageType) || "AskSellerQuestion",
     questionType: s(q.QuestionType),
@@ -129,7 +165,7 @@ export function mapMemberExchange(ex: any, sellerId: string): MappedMessage[] {
       itemId,
       itemTitle: s(ex.Item?.Title),
       subject: `Re: ${s(q.Subject)}`,
-      body: s(r).slice(0, 8000),
+      body: htmlToPlain(s(r)).slice(0, 8000),
       bodyFetched: true,
       messageType: "ResponseToASQQuestion",
       read: true,

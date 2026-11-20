@@ -16,7 +16,8 @@
     "seed:orders": "tsx scripts/seed-orders.ts",
     "seed:returns-messages": "tsx scripts/seed-returns-messages.ts",
     "seed:feedback-inventory": "tsx scripts/seed-feedback-inventory.ts",
-    "seed:money-growth": "tsx scripts/seed-money-growth.ts"
+    "seed:money-growth": "tsx scripts/seed-money-growth.ts",
+    "seed:duplicates": "tsx scripts/seed-duplicates.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",

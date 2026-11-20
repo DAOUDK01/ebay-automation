@@ -197,7 +197,7 @@ test("sync: funds, payouts, transactions, cursors with overlap, payout membershi
   };
   const r1 = await syncFinances(ctxFor(store, null, sell), api);
   const firstTx = api.calls.find((c) => c.path.endsWith("/transaction"))!;
-  assert.match(firstTx.query.filter, /^transactionDate:\[\d{4}-\d\d-\d\dT.*\.\.\],transactionType:\{SALE\|REFUND\|CREDIT\|DISPUTE\|SHIPPING_LABEL\|TRANSFER\|NON_SALE_CHARGE\}$/);
+  assert.match(firstTx.query.filter, /^transactionDate:\[\d{4}-\d\d-\d\dT[^,]*\.\.\]$/, "date filter only - every transaction type");
   assert.deepEqual(r1.cursor, { payoutDate: "2026-10-08T00:00:00.000Z", transactionDate: "2026-10-05T12:00:00.000Z" });
   assert.match(r1.summary!, /2 transactions, 1 payouts, 1 sales matched/);
   assert.ok(api.calls.some((c) => c.query?.filter === "payoutId:{P-1}"), "new payout -> its transactions are read");

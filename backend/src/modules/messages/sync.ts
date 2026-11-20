@@ -6,11 +6,13 @@ import { Message } from "./model";
 import { fetchBodies, fetchHeaders, fetchQuestions, isSystemSender, type MappedMessage } from "./trading";
 
 const DAY = 86_400_000;
-export const FIRST_LOOKBACK_DAYS = 30;
+export const FIRST_LOOKBACK_DAYS = 90;
+/** bump when body extraction changes: GetMyMessages bodies saved by an older version are fetched again */
+export const BODY_VERSION = 2;
 /** re-read a day before the last sync so nothing slips between runs */
 const OVERLAP_MS = DAY;
 /** bodies fetched per run (10 per call) */
-const MAX_BODIES = 100;
+const MAX_BODIES = 300;
 
 /** Upsert rows from either call; the two calls can see the same message (same key) and are merged. */
 export async function upsertMessages(storeId: Types.ObjectId, rows: MappedMessage[]): Promise<number> {
@@ -24,7 +26,7 @@ export async function upsertMessages(storeId: Types.ObjectId, rows: MappedMessag
     if (messageId) set.messageId = messageId;
     if (itemTitle) set.itemTitle = itemTitle;
     if (subject) set.subject = subject;
-    if (body) Object.assign(set, { body, bodyFetched: bodyFetched ?? true });
+    if (body) Object.assign(set, { body, bodyFetched: bodyFetched ?? true, bodyVersion: BODY_VERSION });
     if (source === "my_messages") {
       // GetMyMessages owns the read flag
       if (read !== undefined) set.read = read;
@@ -41,7 +43,11 @@ export async function upsertMessages(storeId: Types.ObjectId, rows: MappedMessag
 }
 
 export async function fillBodies(storeId: Types.ObjectId, t: Pick<TradingClient, "call">): Promise<number> {
-  const missing = await Message.find({ storeId, bodyFetched: false, messageId: { $ne: "" } })
+  const missing = await Message.find({
+    storeId,
+    messageId: { $ne: "" },
+    $or: [{ bodyFetched: false }, { source: "my_messages", bodyVersion: { $lt: BODY_VERSION } }],
+  })
     .sort({ receivedAt: -1 })
     .limit(MAX_BODIES)
     .select("messageId")
@@ -50,7 +56,9 @@ export async function fillBodies(storeId: Types.ObjectId, t: Pick<TradingClient,
   const bodies = await fetchBodies(t, missing.map((m) => m.messageId));
   if (!bodies.size) return 0;
   await Message.bulkWrite(
-    [...bodies].map(([messageId, body]) => ({ updateOne: { filter: { storeId, messageId }, update: { $set: { body, bodyFetched: true } } } })),
+    [...bodies].map(([messageId, body]) => ({
+      updateOne: { filter: { storeId, messageId }, update: { $set: { body, bodyFetched: true, bodyVersion: BODY_VERSION } } },
+    })),
   );
   return bodies.size;
 }
@@ -87,6 +95,37 @@ export async function dedupeOutbound(storeId: Types.ObjectId, sinceDays = 90): P
   return drop.length;
 }
 
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Messages without an item number (often your own replies from the Sent folder) would form their own
+ * thread. Attach each to the same buyer's item conversation closest in time (within 14 days).
+ */
+export async function attachOrphans(storeId: Types.ObjectId): Promise<number> {
+  const orphans = await Message.find({ storeId, itemId: "", buyer: { $ne: "" } }).select("buyer receivedAt").lean();
+  let moved = 0;
+  for (const o of orphans) {
+    const at = o.receivedAt ? new Date(o.receivedAt).getTime() : Date.now();
+    const near = await Message.find({
+      storeId,
+      buyer: new RegExp(`^${escapeRegex(o.buyer)}$`, "i"),
+      itemId: { $ne: "" },
+      receivedAt: { $gte: new Date(at - 14 * DAY), $lte: new Date(at + 14 * DAY) },
+    })
+      .select("threadKey itemId itemTitle receivedAt")
+      .lean();
+    if (!near.length) continue;
+    const dist = (m: (typeof near)[number]) => Math.abs((m.receivedAt ? new Date(m.receivedAt).getTime() : 0) - at);
+    const best = near.sort((a, b) => dist(a) - dist(b))[0];
+    await Message.updateOne(
+      { _id: o._id },
+      { $set: { threadKey: best.threadKey, itemId: best.itemId, ...(best.itemTitle ? { itemTitle: best.itemTitle } : {}) } },
+    );
+    moved++;
+  }
+  return moved;
+}
+
 export async function syncMessages(ctx: SyncContext): Promise<SyncResult> {
   const now = new Date();
   const cursorAt = ctx.cursor?.at ? new Date(ctx.cursor.at) : null;
@@ -98,6 +137,7 @@ export async function syncMessages(ctx: SyncContext): Promise<SyncResult> {
   const questions = await fetchQuestions(t, sellerId, from, now);
   const created = await upsertMessages(ctx.store._id, [...headers, ...questions]);
   const bodies = await fillBodies(ctx.store._id, t);
+  await attachOrphans(ctx.store._id);
   await dedupeOutbound(ctx.store._id);
   ctx.log(`${headers.length} message headers, ${questions.length} question rows, ${bodies} bodies`);
   return {

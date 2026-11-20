@@ -88,7 +88,16 @@ export async function userAccessToken(cacheKey: string, refreshToken: string, gr
   const c = userTokenCache.get(cacheKey);
   if (c && Date.now() < c.exp - 120_000) return c.token;
   const scopes = granted?.length ? granted : LEGACY_SCOPES;
-  const t = await tokenRequest({ grant_type: "refresh_token", refresh_token: refreshToken, scope: scopes.join(" ") });
+  let t: TokenResponse;
+  try {
+    t = await tokenRequest({ grant_type: "refresh_token", refresh_token: refreshToken, scope: scopes.join(" ") });
+  } catch (e: any) {
+    // 400/401 from the token endpoint = the saved connection was revoked, expired or is invalid
+    if (/OAuth error 40[01]/.test(String(e?.message))) {
+      throw new Error(`eBay rejected this account's connection - reconnect it (Reconnect eBay on the store page). ${String(e.message).slice(0, 200)}`);
+    }
+    throw e;
+  }
   userTokenCache.set(cacheKey, { token: t.access_token, exp: Date.now() + t.expires_in * 1000 });
   return t.access_token;
 }
