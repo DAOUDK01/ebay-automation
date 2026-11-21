@@ -36,6 +36,9 @@ const MAKES = [
   "pontiac", "porsche", "ram", "rivian", "rolls-royce", "saab", "saturn", "scion", "smart", "subaru", "suzuki", "tesla",
   "toyota", "volkswagen", "vw", "volvo", "freightliner", "international", "kenworth", "mack", "peterbilt", "harley-davidson",
   "yamaha", "kawasaki", "ducati", "triumph", "can-am", "polaris",
+  // spellings sellers really type in the Brand field
+  "bently", "infinity", "infinty", "volkswagon", "porche", "porshe", "landrover", "land-rover", "range-rover", "mercedez",
+  "benz", "hyundia", "mitsubushi", "chevorlet", "cadilac", "lamborgini", "rollsroyce", "rolls royce", "astonmartin", "alfa",
 ];
 /** the car makers' own parts labels */
 const OE_LABELS = ["motorcraft", "mopar", "acdelco", "ac delco", "gm", "gm genuine", "genuine", "oem", "oe", "genuine oem", "oem genuine", "factory", "nismo", "trd", "mugen", "ford racing", "mopar performance"];
@@ -63,6 +66,7 @@ const AFTERMARKET_BRANDS = [
   "fel-pro", "felpro", "victor reinz", "corteco", "pronto", "rareelectrical", "unipoint", "tri-star", "trq",
   "replacement innovations", "evan fischer", "brock", "anzo", "morimoto", "duraflex", "rugged ridge", "omix-ada", "uro",
   "febi", "meyle", "vaico", "vemo", "gabriel", "sensen", "fcs", "eccpp", "ecccpp", "scitoo", "maxfavor", "bodeman",
+  "hengst", "mann-filter", "mann filter", "wix", "fram", "purolator", "k&n", "champion", "autolite", "motorad", "stant",
 ];
 
 const norm = (s: string) =>
@@ -162,6 +166,10 @@ export function classifyPart(item: Pick<EbayItem, "title" | "conditionId" | "con
     reason = used
       ? `Brand is ${brandRaw}, who also supplies the car makers - a used one is usually the original part`
       : `Brand is ${brandRaw} and the part is new - sold under their own name, not as OEM`;
+  } else if (brand && !NO_BRAND.includes(brand) && used && !AFTERMARKET_BRANDS.some((b) => hasWord(brand, b))) {
+    // used + a brand we don't recognise: usually a misspelled car make ("Infinity Ex-35") on a pulled part
+    origin = "unknown";
+    reason = `Brand is ${brandRaw} - not a known car maker or aftermarket brand; a used part is treated as the original`;
   } else if (brand && !NO_BRAND.includes(brand)) {
     origin = "aftermarket";
     reason = `Brand is ${brandRaw}, an aftermarket maker (not the car maker)`;
@@ -184,7 +192,15 @@ export function classifyPart(item: Pick<EbayItem, "title" | "conditionId" | "con
   }
   // unknown + used: the store sells used genuine parts, so keep its usual "OEM" wording
   const oemWording = origin === "oem" || (origin === "unknown" && used);
-  return { condition, origin, brand: origin === "oem" && !brand ? "" : shownBrand, oemWording, partNumber, reason, brandSpecificWrong };
+  // an aftermarket part's number is the brand's own (Manufacturer Part Number), even if an older title swapped it
+  let keepNumber = partNumber;
+  if (origin === "aftermarket") {
+    const mpn = (Object.entries(specifics).find(([k]) => /^manufacturer part number$/i.test(k))?.[1] ?? []).find(
+      (v) => /\d/.test(v) && v.replace(/[^a-z0-9]/gi, "").length >= 4 && !/does not apply|n\/a/i.test(v),
+    );
+    if (mpn) keepNumber = titleHasPartNumber(item.title, mpn) ? partNumber : mpn;
+  }
+  return { condition, origin, brand: origin === "oem" && !brand ? "" : shownBrand, oemWording, partNumber: keepNumber, reason, brandSpecificWrong };
 }
 
 /**

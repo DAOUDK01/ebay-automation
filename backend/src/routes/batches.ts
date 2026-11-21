@@ -5,9 +5,10 @@ import { z } from "zod";
 import { loadStore } from "../middleware/auth";
 import { HttpError, parseBody } from "../middleware/error";
 import { Batch } from "../models/Batch";
+import { Job } from "../models/Job";
 import { Proposal, PROPOSAL_STATUSES, type ProposalStatus } from "../models/Proposal";
 import { enqueue } from "../services/jobs";
-import { defaultDeps, recountBatch, revertProposal } from "../services/pipeline";
+import { defaultDeps, recountBatch, revertProposal, settleOrphanBatches } from "../services/pipeline";
 
 export const batchesRouter = Router({ mergeParams: true });
 export const proposalsRouter = Router({ mergeParams: true });
@@ -16,6 +17,7 @@ const isId = (s: string) => /^[0-9a-f]{24}$/i.test(s);
 
 batchesRouter.get("/", async (req, res) => {
   const store = await loadStore(req);
+  await settleOrphanBatches(store._id);
   const page = Math.max(1, Number(req.query.page) || 1);
   const pageSize = 20;
   const [items, total] = await Promise.all([
@@ -27,6 +29,7 @@ batchesRouter.get("/", async (req, res) => {
 
 batchesRouter.get("/:batchId", async (req, res) => {
   const store = await loadStore(req);
+  await settleOrphanBatches(store._id);
   const batchId = String(req.params.batchId);
   if (!isId(batchId)) throw new HttpError(404, "Batch not found");
   const batch = await Batch.findOne({ _id: batchId, storeId: store._id }).lean();
@@ -81,6 +84,7 @@ batchesRouter.post("/:batchId/redo", async (req, res) => {
   const batchId = String(req.params.batchId);
   if (!isId(batchId)) throw new HttpError(404, "Batch not found");
   if (req.body?.confirm !== true) throw new HttpError(400, "Please confirm re-running this batch");
+  await settleOrphanBatches(store._id);
   const batch = await Batch.findOne({ _id: batchId, storeId: store._id });
   if (!batch) throw new HttpError(404, "Batch not found");
   if (batch.status === "running" || batch.status === "pushing") throw new HttpError(409, `This batch is still ${batch.status} - wait until it finishes`);
@@ -89,12 +93,15 @@ batchesRouter.post("/:batchId/redo", async (req, res) => {
     .lean();
   const itemIds = [...new Set(rows.map((p) => p.itemId))].slice(0, 200);
   if (!itemIds.length) throw new HttpError(400, "Nothing to re-run - every listing in this batch was pushed or skipped");
-  // queue first: if another batch is running, nothing gets rejected
-  const { job, duplicate } = await enqueue(store._id, "batch", { itemIds, trigger: "manual" });
-  if (duplicate) throw new HttpError(409, "Another batch is already queued or running - try again when it finishes");
+  // re-runs queue up behind any running batch (the worker runs one batch per store at a time) - but the
+  // same batch can't be re-run twice at once
+  const already = await Job.exists({ storeId: store._id, type: "batch", status: { $in: ["queued", "running"] }, "payload.redoOf": batchId });
+  if (already) throw new HttpError(409, "This batch is already queued to re-run");
+  const queuedBefore = await Job.countDocuments({ storeId: store._id, type: "batch", status: { $in: ["queued", "running"] } });
+  const job = await Job.create({ storeId: store._id, type: "batch", payload: { itemIds, trigger: "manual", redoOf: batchId }, status: "queued", runAt: new Date() });
   const r = await Proposal.updateMany({ batchId: batch._id, status: { $in: ["proposed", "approved"] } }, { $set: { status: "rejected" } });
   await recountBatch(batch._id as any);
-  res.status(202).json({ job, count: itemIds.length, rejected: r.modifiedCount });
+  res.status(202).json({ job, count: itemIds.length, rejected: r.modifiedCount, queuedBehind: queuedBefore });
 });
 
 // ------------------------------------------------------------- proposals

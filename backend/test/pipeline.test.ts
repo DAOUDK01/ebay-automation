@@ -338,10 +338,51 @@ test("batch redo: rejects what's waiting, re-runs the same listings (not pushed 
   const statuses = Object.fromEntries((await Proposal.find({ batchId: batch._id }).lean()).map((p) => [p.itemId, p.status]));
   assert.deepEqual(statuses, { r1: "rejected", r2: "rejected", r3: "pushed", r4: "no_change", r5: "skipped" });
 
-  // another batch already queued: refused, nothing changes
+  // the same batch twice: refused, nothing changes
   await Proposal.updateOne({ batchId: batch._id, itemId: "r1" }, { $set: { status: "proposed" } });
   const again = await call(`/stores/${sid}/batches/${batch._id}/redo`, "POST", { confirm: true });
   assert.equal(again.status, 409);
   assert.equal((await Proposal.findOne({ batchId: batch._id, itemId: "r1" }).lean())!.status, "proposed");
+
+  // a different batch queues up behind it (the worker runs them one after another)
+  const other = await Batch.create({ storeId: store._id, number: 904, mode: "review", status: "review" });
+  await Proposal.create({ storeId: store._id, batchId: other._id, itemId: "r9", status: "proposed", before: ITEM("r9", "t") });
+  const second = await call(`/stores/${sid}/batches/${other._id}/redo`, "POST", { confirm: true });
+  assert.equal(second.status, 202, JSON.stringify(second.json));
+  assert.equal(second.json.queuedBehind, 1);
+  assert.equal(await Job.countDocuments({ storeId: store._id, type: "batch", status: "queued" }), 2);
+  await Job.deleteMany({ storeId: store._id });
+});
+
+test("worker restart: the same job continues its batch instead of starting a duplicate", async () => {
+  const fresh = (await Store.findById(store._id)) as StoreDocument;
+  const jobId = new mongoose.Types.ObjectId();
+  let checks = 0;
+  // first run dies after one listing (as if the worker restarted)
+  const first = await runBatch(fresh, deps, { itemIds: ["1", "2"], jobId, shouldStop: async () => ++checks > 1 });
+  assert.equal(await Proposal.countDocuments({ batchId: first!._id }), 1);
+  const before = await Batch.countDocuments({ storeId: store._id });
+  // the re-queued job runs again: same batch, only the missing listing
+  const again = await runBatch(fresh, deps, { itemIds: ["1", "2"], jobId });
+  assert.equal(String(again!._id), String(first!._id));
+  assert.equal(await Batch.countDocuments({ storeId: store._id }), before, "no new batch");
+  const ids = (await Proposal.find({ batchId: first!._id }).lean()).map((p) => p.itemId).sort();
+  assert.deepEqual(ids, ["1", "2"], "each listing once");
+  assert.equal(again!.status, "review");
+});
+
+test("orphan batches: 'running' with no job behind it becomes reviewable", async () => {
+  await Job.deleteMany({ storeId: store._id });
+  const queued = await Job.create({ storeId: store._id, type: "batch", status: "queued", payload: {}, runAt: new Date() });
+  const orphan = await Batch.create({ storeId: store._id, number: 901, mode: "review", status: "running" });
+  const own = await Batch.create({ storeId: store._id, number: 902, mode: "review", status: "running", jobId: queued._id });
+  const deadJob = await Batch.create({ storeId: store._id, number: 903, mode: "review", status: "running", jobId: new mongoose.Types.ObjectId() });
+  const r = await call(`/stores/${store._id}/batches`);
+  assert.equal(r.status, 200);
+  const st = async (id: unknown) => (await Batch.findById(id).lean())!.status;
+  assert.equal(await st(orphan._id), "review");
+  assert.equal(await st(deadJob._id), "review");
+  assert.equal(await st(own._id), "running", "its job is still queued - it will resume");
+  assert.match((await Batch.findById(orphan._id).lean())!.error ?? "", /stopped before finishing/);
   await Job.deleteMany({ storeId: store._id });
 });

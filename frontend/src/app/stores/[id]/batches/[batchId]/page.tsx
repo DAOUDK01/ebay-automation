@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { BatchProgress } from "@/components/BatchProgress";
+import { Modal } from "@/components/feedback/Modal";
 import { ProposalCard } from "@/components/ProposalCard";
 import { toast } from "@/components/toast";
 import { Alert, Button, Card, Spinner, StatusBadge, cx } from "@/components/ui";
@@ -31,6 +32,7 @@ export default function BatchReviewPage() {
   });
   const [filter, setFilter] = useState("review");
   const [busy, setBusy] = useState("");
+  const [ask, setAsk] = useState(false);
 
   const counts = useMemo(
     () => Object.fromEntries(FILTERS.map((f) => [f.key, data?.proposals.filter(f.match).length ?? 0])),
@@ -78,20 +80,17 @@ export default function BatchReviewPage() {
   // listings that can be optimized again (not pushed, not skipped auctions)
   const redoable = new Set(proposals.filter((p) => ["proposed", "approved", "rejected", "no_change", "error"].includes(p.status)).map((p) => p.itemId)).size;
 
+  // confirmed in an in-app dialog (native confirm() pop-ups are blocked in some embedded/mobile browsers)
   async function redo() {
-    const waiting = proposed + approved;
-    if (
-      !confirm(
-        `Re-run this batch with the latest rules?\n\n` +
-          (waiting ? `${waiting} change(s) waiting for review will be rejected (nothing is sent to eBay). ` : "") +
-          `${redoable} listing(s) will be optimized again in a new batch.`,
-      )
-    )
-      return;
     setBusy("redo");
     try {
-      const r = await api<{ count: number; rejected: number }>(`/stores/${id}/batches/${batchId}/redo`, { body: { confirm: true } });
-      toast.success(`Rejected ${r.rejected} - re-running ${r.count} listing(s) in a new batch (see Review & batches)`);
+      const r = await api<{ count: number; rejected: number; queuedBehind: number }>(`/stores/${id}/batches/${batchId}/redo`, { body: { confirm: true } });
+      toast.success(
+        `Rejected ${r.rejected} - ${r.count} listing(s) will be optimized again in a new batch` +
+          (r.queuedBehind ? ` (queued behind ${r.queuedBehind} other batch${r.queuedBehind > 1 ? "es" : ""})` : "") +
+          " - see Review & batches",
+      );
+      setAsk(false);
       mutate();
     } catch (e: any) {
       toast.error(e.message);
@@ -116,6 +115,33 @@ export default function BatchReviewPage() {
 
   return (
     <div className="space-y-4">
+      {ask && (
+        <Modal
+          title={`Re-run batch #${batch.number}?`}
+          onClose={() => setAsk(false)}
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setAsk(false)}>
+                Cancel
+              </Button>
+              <Button onClick={redo} loading={busy === "redo"}>
+                Reject &amp; re-run
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm text-slate-700">The listings in this batch are optimized again with the latest rules, in a new batch.</p>
+          <ul className="list-disc space-y-1 pl-5 text-sm text-slate-600">
+            {proposed + approved > 0 && (
+              <li>
+                {proposed + approved} change(s) waiting for review will be rejected - nothing is sent to eBay.
+              </li>
+            )}
+            <li>{redoable} listing(s) will be optimized again.</li>
+            <li>Listings already pushed to eBay are left as they are.</li>
+          </ul>
+        </Modal>
+      )}
       <Link href={`/stores/${id}/batches`} className="text-xs text-slate-500 hover:text-slate-700">
         ← All batches
       </Link>
@@ -137,7 +163,7 @@ export default function BatchReviewPage() {
                 variant="secondary"
                 size="sm"
                 loading={busy === "redo"}
-                onClick={redo}
+                onClick={() => setAsk(true)}
                 title="Reject what's waiting for review and optimize these listings again with the latest rules"
               >
                 Reject &amp; re-run

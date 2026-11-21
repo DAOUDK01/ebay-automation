@@ -244,3 +244,22 @@ test("pipeline: A+ text that calls a new part used is not applied", () => {
   assert.equal(r.changes.description, undefined);
   assert.ok(r.notes.some((n) => /description rejected: says "Used part".*New · Aftermarket \(FEBEST\)/.test(n)), r.notes.join(" | "));
 });
+
+test("misspelled makes and unknown brands on used parts keep the store's OEM wording", () => {
+  const used = (brand: string) => classifyPart({ title: "2008-2012 Infiniti EX35 Left Headlight", conditionId: "3000", condition: "Used", itemSpecifics: { Brand: [brand] } });
+  for (const b of ["Bently", "Infinity Ex-35", "Volkswagon", "Porche", "Jaguar Xjl", "Jeep Grand"]) assert.equal(used(b).origin, "oem", b);
+  const odd = used("Kazmi Parts Co");
+  assert.equal(odd.origin, "unknown");
+  assert.equal(odd.oemWording, true, "used + unknown brand: treated as the original part");
+  assert.equal(used("Dorman").origin, "aftermarket", "a known aftermarket brand still counts on a used part");
+  // a new part with an unknown brand is aftermarket (never "OEM")
+  assert.equal(classifyPart({ title: "Kazmi Headlight", conditionId: "1000", condition: "New", itemSpecifics: { Brand: ["Kazmi Parts Co"] } }).oemWording, false);
+});
+
+test("aftermarket: the title must carry the brand's own number, even if an older title swapped it for the OE number", () => {
+  const k = classifyPart(febest({ title: "2001-2006 FEBEST Acura MDX Differential Mount Bushing 50728-S3V-A01 OEM Used" }));
+  assert.equal(k.partNumber, "HAB-133");
+  const r = checkTitle(k ? "2001-2006 FEBEST Acura MDX Differential Mount Bushing 50728-S3V-A01 OEM Used" : "", "2001-2006 FEBEST Acura MDX Differential Mount Bushing HAB-133 New", TEMPLATE, k);
+  assert.equal(r.note, "title: ok");
+  assert.match(checkTitle("x", "2001-2006 FEBEST Acura MDX Differential Mount Bushing 50728-S3V-A01 New", TEMPLATE, k).note, /HAB-133/);
+});

@@ -14,6 +14,7 @@ import { checkCompatibility, checkPrice, checkSpecifics, checkTitle } from "../l
 import { adaptTitleTemplate, classifyPart, CONDITION_LABEL, descriptionConflict, partLabel } from "../lib/partKind";
 import { logger, sleep } from "../lib/logger";
 import { Batch } from "../models/Batch";
+import { Job } from "../models/Job";
 import { Listing } from "../models/Listing";
 import { Proposal, type ProposalStatus } from "../models/Proposal";
 import { resolveSettings, Store, type StoreDocument, type StoreSettings } from "../models/Store";
@@ -334,6 +335,29 @@ async function processItem(store: StoreDocument, s: StoreSettings, deps: Pipelin
 }
 
 // ---------------------------------------------------------------- batch
+/**
+ * A batch left "running" with no job working on it (the runner was stopped mid-batch, or the job died) would
+ * show "running" forever and couldn't be reviewed or re-run. Mark those as stopped (review).
+ * While a batch job is running, its own (newest) batch is left alone.
+ */
+export async function settleOrphanBatches(storeId: Types.ObjectId | string): Promise<number> {
+  const running = await Batch.find({ storeId, status: "running" }).sort({ number: -1 }).select("_id jobId").lean();
+  if (!running.length) return 0;
+  const jobs = await Job.find({ storeId, type: "batch", status: { $in: ["queued", "running"] } }).select("_id status").lean();
+  const live = new Set(jobs.map((j) => String(j._id)));
+  const jobRunning = jobs.some((j) => j.status === "running");
+  const orphans = running.filter((b, i) => {
+    if (b.jobId) return !live.has(String(b.jobId)); // its job is gone (a queued job of its own will resume it)
+    return !(jobRunning && i === 0); // older batches without a job id: only the newest may still be running
+  });
+  if (!orphans.length) return 0;
+  await Batch.updateMany(
+    { _id: { $in: orphans.map((b) => b._id) }, status: "running" },
+    { $set: { status: "review", finishedAt: new Date(), error: "stopped before finishing (runner stopped or worker restarted)" } },
+  );
+  return orphans.length;
+}
+
 export async function recountBatch(batchId: Types.ObjectId) {
   const rows = await Proposal.aggregate([{ $match: { batchId } }, { $group: { _id: "$status", n: { $sum: 1 }, usd: { $sum: "$costUsd" } } }]);
   const by = (st: string) => rows.find((r) => r._id === st)?.n ?? 0;
@@ -377,19 +401,39 @@ export async function pickNextItems(store: StoreDocument, size: number, cooldown
 export async function runBatch(
   store: StoreDocument,
   deps: PipelineDeps,
-  opts: { limit?: number; itemIds?: string[]; trigger?: "schedule" | "manual"; shouldStop?: () => Promise<boolean> } = {},
+  opts: {
+    limit?: number;
+    itemIds?: string[];
+    trigger?: "schedule" | "manual";
+    shouldStop?: () => Promise<boolean>;
+    /** the job running this batch: if the worker restarted mid-batch, the same job continues its batch */
+    jobId?: Types.ObjectId | string;
+  } = {},
 ) {
   const s = resolveSettings(store.settings);
-  const ids = opts.itemIds?.length ? opts.itemIds : await pickNextItems(store, opts.limit ?? s.batchSize, s.cooldownDays);
-  if (!ids.length) {
-    logger.info(`[${store.name}] no listings due (all processed within cooldown)`);
-    return null;
+  const resumed = opts.jobId ? await Batch.findOne({ storeId: store._id, jobId: opts.jobId }) : null;
+  let ids: string[];
+  let batch;
+  if (resumed) {
+    // continue where it stopped: skip listings that already have a result in this batch
+    const done = new Set((await Proposal.find({ batchId: resumed._id }).select("itemId").lean()).map((p) => p.itemId));
+    ids = (resumed.itemIds ?? []).filter((id) => !done.has(id));
+    await Batch.updateOne({ _id: resumed._id }, { $set: { status: "running" }, $unset: { error: 1, finishedAt: 1 } });
+    batch = resumed;
+    logger.info(`[${store.name}] batch #${resumed.number}: resuming after a restart, ${ids.length} listing(s) left`);
+  } else {
+    ids = opts.itemIds?.length ? opts.itemIds : await pickNextItems(store, opts.limit ?? s.batchSize, s.cooldownDays);
+    if (!ids.length) {
+      logger.info(`[${store.name}] no listings due (all processed within cooldown)`);
+      return null;
+    }
+    const number = (await Batch.countDocuments({ storeId: store._id })) + 1;
+    batch = await Batch.create({
+      storeId: store._id, number, mode: s.mode, trigger: opts.trigger ?? "manual", counts: { total: ids.length },
+      jobId: opts.jobId ?? null, itemIds: ids,
+    });
+    logger.info(`[${store.name}] batch #${number}: ${ids.length} listings, mode=${s.mode}`);
   }
-  const number = (await Batch.countDocuments({ storeId: store._id })) + 1;
-  const batch = await Batch.create({
-    storeId: store._id, number, mode: s.mode, trigger: opts.trigger ?? "manual", counts: { total: ids.length },
-  });
-  logger.info(`[${store.name}] batch #${number}: ${ids.length} listings, mode=${s.mode}`);
 
   let stopReason = "";
   for (let i = 0; i < ids.length; i++) {

@@ -94,6 +94,7 @@ async function runJob(job: InstanceType<typeof Job>) {
         itemIds: payload.itemIds,
         trigger: payload.trigger ?? "manual",
         shouldStop: async () => (await Job.findById(job._id).select("status").lean())?.status === "cancelled",
+        jobId: job._id,
       });
       result = { batchId: batch?._id ?? null, number: batch?.number ?? null };
       if (payload.trigger === "schedule") {

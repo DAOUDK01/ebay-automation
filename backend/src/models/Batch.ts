@@ -9,6 +9,9 @@ const batchSchema = new Schema(
     status: { type: String, enum: BATCH_STATUSES, default: "running" },
     mode: { type: String, enum: ["review", "auto"], required: true },
     trigger: { type: String, enum: ["schedule", "manual"], default: "manual" },
+    /** the job that runs it + its listings: a job re-run after a worker restart continues this batch */
+    jobId: { type: Schema.Types.ObjectId, default: null, index: true },
+    itemIds: { type: [String], default: [] },
     startedAt: { type: Date, default: Date.now },
     finishedAt: Date,
     costUsd: { type: Number, default: 0 },
